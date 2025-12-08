@@ -694,48 +694,80 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             return int.TryParse(digits, out var n) ? n : int.MaxValue;
         }
 
+        // Map an SV- ident to its owning Rule's V- id (if any)
+        private static string? ResolveVIdForSv(string svId, string xccdfPath)
+        {
+            if (string.IsNullOrWhiteSpace(svId) || !svId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            try
+            {
+                using var reader = System.Xml.XmlReader.Create(
+                    xccdfPath,
+                    new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+
+                while (reader.Read())
+                {
+                    if (reader.NodeType == System.Xml.XmlNodeType.Element &&
+                        reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var vId = reader.GetAttribute("id")?.Trim();
+                        using var subTree = reader.ReadSubtree();
+                        while (subTree.Read())
+                        {
+                            if (subTree.NodeType == System.Xml.XmlNodeType.Element &&
+                                subTree.LocalName.Equals("ident", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var identText = subTree.ReadElementContentAsString()?.Trim();
+                                if (string.Equals(identText, svId, StringComparison.OrdinalIgnoreCase))
+                                    return vId;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
         // Double-click handler on InfoRichTextBox to open rule info
         private void InfoRichTextBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            var clickedText = GetWordUnderMouse(InfoRichTextBox, e);
-            if (string.IsNullOrWhiteSpace(clickedText))
+            var lineText = GetLineUnderMouse(InfoRichTextBox, e) ?? GetWordUnderMouse(InfoRichTextBox, e);
+            if (string.IsNullOrWhiteSpace(lineText))
                 return;
 
-            var match = Regex.Match(clickedText, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
-            if (!match.Success)
+            var m = Regex.Match(lineText, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
+            if (!m.Success)
             {
-                // Try the full line under mouse if word didn't match
-                var lineText = GetLineUnderMouse(InfoRichTextBox, e);
-                match = Regex.Match(lineText ?? string.Empty, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
+                m = Regex.Match(lineText, @"\b(SV-\d+|V-\d+)[^0-9]", RegexOptions.IgnoreCase);
+                if (!m.Success) return;
             }
+            var rawId = Regex.Match(m.Value, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase).Value;
 
-            if (!match.Success)
-                return;
-
-            var ruleId = match.Value.Trim();
-
-            // Resolve inputs from current UI
             var xccdfPath = XccdfPathTextBox.Text?.Trim();
             var destination = DestinationTextBox.Text?.Trim();
-
             if (string.IsNullOrWhiteSpace(xccdfPath) || !File.Exists(xccdfPath))
             {
                 System.Windows.MessageBox.Show("XCCDF path is not set or invalid.", "Rule Info", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            // Gather details
-            var info = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, destination);
+            // Always extract XCCDF data using the clicked id (SV or V) so SV-only rules populate
+            var info = RuleInfoExtractor.TryExtractRuleInfo(rawId, xccdfPath!, destination);
 
-            // Show window
-            var win = new RuleInfoWindow
+            // If SV was clicked, resolve and annotate the linked V id for display and converted lookup
+            if (rawId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
             {
-                Owner = this
-            };
+                info.SvId ??= rawId;
+                var resolvedV = ResolveVIdForSv(rawId, xccdfPath!);
+                if (!string.IsNullOrWhiteSpace(resolvedV))
+                    info.RuleId = resolvedV!;
+            }
+
+            var win = new RuleInfoWindow { Owner = this };
             win.SetRuleInfo(info);
             win.ShowDialog();
-
-            // Prevent default selection behavior from interfering
             e.Handled = true;
         }
 
@@ -828,91 +860,76 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
         {
             try
             {
-                using var reader = System.Xml.XmlReader.Create(
-                    xccdfPath,
-                    new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+                var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+                var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore };
+                using var reader = System.Xml.XmlReader.Create(xccdfPath, settings);
+                doc.Load(reader);
 
-                while (reader.Read())
+                // Find the owning <Rule> for either V-... (id) or SV-... (ident)
+                System.Xml.XmlNode? ruleNode = null;
+                if (ruleId.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (reader.NodeType == System.Xml.XmlNodeType.Element &&
-                        reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
+                    ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{ruleId}']");
+                }
+                else if (ruleId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                {
+                    // ident inner text or system attribute containing SV-#####
+                    // XPath 1.0 does not support variables, so we use string interpolation
+                    ruleNode = doc.SelectSingleNode(
+                        $"//*[local-name()='Rule'][.//*[local-name()='ident' and (text()='{ruleId}' or contains(@system,'{ruleId}'))]]");
+                }
+
+                if (ruleNode is null)
+                    return;
+
+                // Basic attributes
+                var vIdAttr = ruleNode.Attributes?["id"]?.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(vIdAttr)) info.RuleId = vIdAttr;
+
+                var severityAttr = ruleNode.Attributes?["severity"]?.Value;
+                if (!string.IsNullOrWhiteSpace(severityAttr)) info.Severity = severityAttr;
+
+                // Title
+                var titleNode = ruleNode.SelectSingleNode(".//*[local-name()='title']");
+                if (titleNode is not null) info.Title = titleNode.InnerText.Trim();
+
+                // Description (concatenate if multiple)
+                var descNodes = ruleNode.SelectNodes(".//*[local-name()='description']");
+                if (descNodes is not null && descNodes.Count > 0)
+                {
+                    var sb = new StringBuilder();
+                    foreach (System.Xml.XmlNode dn in descNodes)
+                        sb.AppendLine(dn.InnerText.Trim());
+                    info.Description = sb.ToString().Trim();
+                }
+
+                // FixText
+                var fixNode = ruleNode.SelectSingleNode(".//*[local-name()='fixtext']");
+                if (fixNode is not null) info.FixText = fixNode.InnerText.Trim();
+
+                // ident (SV-)
+                var identNode = ruleNode.SelectSingleNode(".//*[local-name()='ident' and (starts-with(text(),'SV-') or contains(@system,'SV-'))]");
+                if (identNode is not null)
+                {
+                    var identText = identNode.InnerText?.Trim();
+                    var systemAttr = identNode.Attributes?["system"]?.Value;
+                    if (!string.IsNullOrWhiteSpace(identText) && identText.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                        info.SvId = identText;
+                    else if (!string.IsNullOrWhiteSpace(systemAttr))
                     {
-                        var vId = reader.GetAttribute("id")?.Trim();
-
-                        // For SV- clicks, match by <ident>SV-... inside the Rule.
-                        bool matches =
-                            string.Equals(vId, ruleId, StringComparison.OrdinalIgnoreCase);
-
-                        if (!matches && ruleId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
-                        {
-                            using var probe = reader.ReadSubtree();
-                            while (probe.Read())
-                            {
-                                if (probe.NodeType == System.Xml.XmlNodeType.Element &&
-                                    probe.LocalName.Equals("ident", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    var identText = probe.ReadElementContentAsString()?.Trim();
-                                    if (string.Equals(identText, ruleId, StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        matches = true;
-                                        // Preserve the linked V- id if present
-                                        info.RuleId = vId ?? info.RuleId;
-                                        info.SvId = identText;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!matches)
-                            continue;
-
-                        // If matched by V-, ensure RuleId
-                        if (!string.IsNullOrWhiteSpace(vId))
-                            info.RuleId = vId;
-
-                        info.Severity = reader.GetAttribute("severity") ?? info.Severity;
-
-                        using var subTree = reader.ReadSubtree();
-                        var sbDesc = new StringBuilder();
-                        var sbRefs = new StringBuilder();
-
-                        while (subTree.Read())
-                        {
-                            if (subTree.NodeType != System.Xml.XmlNodeType.Element) continue;
-
-                            var name = subTree.LocalName;
-                            if (name.Equals("title", StringComparison.OrdinalIgnoreCase))
-                            {
-                                info.Title = subTree.ReadElementContentAsString();
-                            }
-                            else if (name.Equals("description", StringComparison.OrdinalIgnoreCase))
-                            {
-                                sbDesc.AppendLine(subTree.ReadElementContentAsString());
-                            }
-                            else if (name.Equals("reference", StringComparison.OrdinalIgnoreCase))
-                            {
-                                sbRefs.AppendLine(subTree.ReadOuterXml());
-                            }
-                            else if (name.Equals("fixtext", StringComparison.OrdinalIgnoreCase))
-                            {
-                                info.FixText = subTree.ReadElementContentAsString();
-                            }
-                            else if (name.Equals("ident", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var identText = subTree.ReadElementContentAsString();
-                                if (!string.IsNullOrWhiteSpace(identText) &&
-                                    identText.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    info.SvId = identText.Trim();
-                                }
-                            }
-                        }
-
-                        info.Description = sbDesc.ToString().Trim();
-                        info.ReferencesXml = sbRefs.ToString().Trim();
-                        break;
+                        var m = Regex.Match(systemAttr, @"SV-\d+", RegexOptions.IgnoreCase);
+                        if (m.Success) info.SvId = m.Value;
                     }
+                }
+
+                // References (raw XML snippets to keep fidelity)
+                var refNodes = ruleNode.SelectNodes(".//*[local-name()='reference']");
+                if (refNodes is not null && refNodes.Count > 0)
+                {
+                    var sb = new StringBuilder();
+                    foreach (System.Xml.XmlNode rn in refNodes)
+                        sb.AppendLine(rn.OuterXml);
+                    info.ReferencesXml = sb.ToString().Trim();
                 }
             }
             catch

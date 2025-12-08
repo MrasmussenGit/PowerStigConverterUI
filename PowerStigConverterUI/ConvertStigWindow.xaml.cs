@@ -6,6 +6,9 @@ using System.Text;
 using System.Windows;
 using Microsoft.Win32;
 using System.Windows.Forms;
+using System.Text.RegularExpressions;
+using System.Windows.Documents;
+using System.Windows.Input;
 
 namespace PowerStigConverterUI
 {
@@ -23,6 +26,8 @@ namespace PowerStigConverterUI
         public ConvertStigWindow()
         {
             InitializeComponent();
+            // Ensure the auto-discovery runs after the visual tree is ready
+            this.Loaded += OnLoaded;
         }
 
         // Centering requires Owner to be set by the caller:
@@ -143,6 +148,20 @@ namespace PowerStigConverterUI
 
                 foreach (var vdir in versionDirs)
                 {
+                    // Common layouts under PowerSTIG\<version>\...
+                    // 1) ...\PowerStig.Convert\PowerStig.Convert.psm1
+                    var underConvert = Path.Combine(vdir, "PowerStig.Convert", psm1Name);
+                    if (File.Exists(underConvert)) return underConvert;
+
+                    // 2) ...\Modules\PowerStig.Convert\PowerStig.Convert.psm1
+                    var underModules = Path.Combine(vdir, "Modules", "PowerStig.Convert", psm1Name);
+                    if (File.Exists(underModules)) return underModules;
+
+                    // 3) ...\<version>\PowerStig.Convert.psm1 (directly under version folder)
+                    var direct = Path.Combine(vdir, psm1Name);
+                    if (File.Exists(direct)) return direct;
+
+                    // 4) Fallback: deep recursive search (handles uncommon layouts)
                     var candidate = FindFileRecursive(vdir, psm1Name);
                     if (candidate is not null)
                         return candidate;
@@ -674,5 +693,274 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             var digits = (i > 0) ? s.Substring(0, i) : string.Empty;
             return int.TryParse(digits, out var n) ? n : int.MaxValue;
         }
+
+        // Double-click handler on InfoRichTextBox to open rule info
+        private void InfoRichTextBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            var clickedText = GetWordUnderMouse(InfoRichTextBox, e);
+            if (string.IsNullOrWhiteSpace(clickedText))
+                return;
+
+            var match = Regex.Match(clickedText, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                // Try the full line under mouse if word didn't match
+                var lineText = GetLineUnderMouse(InfoRichTextBox, e);
+                match = Regex.Match(lineText ?? string.Empty, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
+            }
+
+            if (!match.Success)
+                return;
+
+            var ruleId = match.Value.Trim();
+
+            // Resolve inputs from current UI
+            var xccdfPath = XccdfPathTextBox.Text?.Trim();
+            var destination = DestinationTextBox.Text?.Trim();
+
+            if (string.IsNullOrWhiteSpace(xccdfPath) || !File.Exists(xccdfPath))
+            {
+                System.Windows.MessageBox.Show("XCCDF path is not set or invalid.", "Rule Info", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Gather details
+            var info = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, destination);
+
+            // Show window
+            var win = new RuleInfoWindow
+            {
+                Owner = this
+            };
+            win.SetRuleInfo(info);
+            win.ShowDialog();
+
+            // Prevent default selection behavior from interfering
+            e.Handled = true;
+        }
+
+        private static string? GetWordUnderMouse(System.Windows.Controls.RichTextBox rtb, MouseButtonEventArgs e)
+        {
+            var pos = rtb.GetPositionFromPoint(e.GetPosition(rtb), true);
+            if (pos == null) return null;
+
+            var wordRange = GetWordRange(pos);
+            return wordRange?.Text;
+        }
+
+        private static string? GetLineUnderMouse(System.Windows.Controls.RichTextBox rtb, MouseButtonEventArgs e)
+        {
+            var pos = rtb.GetPositionFromPoint(e.GetPosition(rtb), true);
+            if (pos == null) return null;
+
+            // Expand to paragraph
+            var para = pos.Paragraph;
+            return para?.ContentStart != null && para?.ContentEnd != null
+                ? new TextRange(para.ContentStart, para.ContentEnd).Text
+                : null;
+        }
+
+        private static TextRange? GetWordRange(TextPointer position)
+        {
+            var wordStart = GetPositionAtWordBoundary(position, LogicalDirection.Backward);
+            var wordEnd = GetPositionAtWordBoundary(position, LogicalDirection.Forward);
+            if (wordStart == null || wordEnd == null)
+                return null;
+            return new TextRange(wordStart, wordEnd);
+        }
+
+        private static TextPointer? GetPositionAtWordBoundary(TextPointer position, LogicalDirection direction)
+        {
+            var navigator = position;
+            while (navigator != null && !IsWordBoundary(navigator, direction))
+            {
+                navigator = navigator.GetPositionAtOffset(direction == LogicalDirection.Forward ? 1 : -1, LogicalDirection.Forward);
+            }
+            return navigator;
+        }
+
+        private static bool IsWordBoundary(TextPointer position, LogicalDirection direction)
+        {
+            var charType = GetCharType(position, direction);
+            var adjacentPos = position.GetPositionAtOffset(direction == LogicalDirection.Forward ? 1 : -1, LogicalDirection.Forward);
+            var adjacentCharType = GetCharType(adjacentPos, direction);
+
+            return charType == CharType.Character && adjacentCharType == CharType.WhiteSpace
+                   || charType == CharType.WhiteSpace && adjacentCharType == CharType.Character
+                   || adjacentPos == null;
+        }
+
+        private enum CharType { None, WhiteSpace, Character }
+
+        private static CharType GetCharType(TextPointer? position, LogicalDirection direction)
+        {
+            if (position == null) return CharType.None;
+            char[] buffer = new char[1];
+            var tr = position.GetTextInRun(direction, buffer, 0, 1);
+            if (tr == 0) return CharType.None;
+            var ch = buffer[0];
+            if (char.IsWhiteSpace(ch)) return CharType.WhiteSpace;
+            return CharType.Character;
+        }
+
+        // ... existing methods ...
     }
+
+    internal static class RuleInfoExtractor
+    {
+        public static RuleInfo TryExtractRuleInfo(string ruleId, string xccdfPath, string? convertedFolder)
+        {
+            var info = new RuleInfo { RuleId = ruleId };
+
+            // From XCCDF
+            TryFillFromXccdf(ruleId, xccdfPath, info);
+
+            // From converted outputs (if available)
+            if (!string.IsNullOrWhiteSpace(convertedFolder) && Directory.Exists(convertedFolder))
+            {
+                TryFillFromConverted(ruleId, convertedFolder!, info);
+            }
+
+            return info;
+        }
+
+        private static void TryFillFromXccdf(string ruleId, string xccdfPath, RuleInfo info)
+        {
+            try
+            {
+                using var reader = System.Xml.XmlReader.Create(
+                    xccdfPath,
+                    new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+
+                while (reader.Read())
+                {
+                    if (reader.NodeType == System.Xml.XmlNodeType.Element &&
+                        reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var vId = reader.GetAttribute("id")?.Trim();
+
+                        // For SV- clicks, match by <ident>SV-... inside the Rule.
+                        bool matches =
+                            string.Equals(vId, ruleId, StringComparison.OrdinalIgnoreCase);
+
+                        if (!matches && ruleId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using var probe = reader.ReadSubtree();
+                            while (probe.Read())
+                            {
+                                if (probe.NodeType == System.Xml.XmlNodeType.Element &&
+                                    probe.LocalName.Equals("ident", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var identText = probe.ReadElementContentAsString()?.Trim();
+                                    if (string.Equals(identText, ruleId, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        matches = true;
+                                        // Preserve the linked V- id if present
+                                        info.RuleId = vId ?? info.RuleId;
+                                        info.SvId = identText;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!matches)
+                            continue;
+
+                        // If matched by V-, ensure RuleId
+                        if (!string.IsNullOrWhiteSpace(vId))
+                            info.RuleId = vId;
+
+                        info.Severity = reader.GetAttribute("severity") ?? info.Severity;
+
+                        using var subTree = reader.ReadSubtree();
+                        var sbDesc = new StringBuilder();
+                        var sbRefs = new StringBuilder();
+
+                        while (subTree.Read())
+                        {
+                            if (subTree.NodeType != System.Xml.XmlNodeType.Element) continue;
+
+                            var name = subTree.LocalName;
+                            if (name.Equals("title", StringComparison.OrdinalIgnoreCase))
+                            {
+                                info.Title = subTree.ReadElementContentAsString();
+                            }
+                            else if (name.Equals("description", StringComparison.OrdinalIgnoreCase))
+                            {
+                                sbDesc.AppendLine(subTree.ReadElementContentAsString());
+                            }
+                            else if (name.Equals("reference", StringComparison.OrdinalIgnoreCase))
+                            {
+                                sbRefs.AppendLine(subTree.ReadOuterXml());
+                            }
+                            else if (name.Equals("fixtext", StringComparison.OrdinalIgnoreCase))
+                            {
+                                info.FixText = subTree.ReadElementContentAsString();
+                            }
+                            else if (name.Equals("ident", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var identText = subTree.ReadElementContentAsString();
+                                if (!string.IsNullOrWhiteSpace(identText) &&
+                                    identText.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    info.SvId = identText.Trim();
+                                }
+                            }
+                        }
+
+                        info.Description = sbDesc.ToString().Trim();
+                        info.ReferencesXml = sbRefs.ToString().Trim();
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore parse errors
+            }
+        }
+
+        private static void TryFillFromConverted(string ruleId, string folder, RuleInfo info)
+        {
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(folder, "*.xml", SearchOption.TopDirectoryOnly))
+                {
+                    var doc = new System.Xml.XmlDocument();
+                    doc.Load(file);
+
+                    // Try attributes and common element names
+                    var candidates = doc.SelectNodes($"//*[@id='{ruleId}']");
+                    if (candidates is not null && candidates.Count > 0)
+                    {
+                        info.ConvertedFile = file;
+                        info.ConvertedSnippet = GetNodeSummary(candidates[0]);
+                        return;
+                    }
+
+                    var node = doc.SelectSingleNode(
+                        $"//*[local-name()='RuleId' or local-name()='VulnId' or local-name()='BenchmarkId'][text()='{ruleId}']");
+                    if (node is not null)
+                    {
+                        info.ConvertedFile = file;
+                        info.ConvertedSnippet = GetNodeSummary(node);
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private static string GetNodeSummary(System.Xml.XmlNode node)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(node.OuterXml.Length <= 4000 ? node.OuterXml : node.OuterXml.Substring(0, 4000) + "...");
+            return sb.ToString();
+        }
+    }
+
 }

@@ -403,17 +403,17 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                     if (successIds.Count > 0)
                     {
-                        AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                        AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
                         foreach (var id in successIds.Take(100))
                         {
-                            AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                            AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
                         }
                         if (successIds.Count > 100)
-                            AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                            AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
                     }
                     else
                     {
-                        AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                        AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
                     }
 
                     // Missing (present in XCCDF but not in converted output)

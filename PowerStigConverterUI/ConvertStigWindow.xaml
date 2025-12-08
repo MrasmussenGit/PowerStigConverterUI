@@ -15,8 +15,22 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- Advanced: Module selection de-emphasized (moved above Input and Output) -->
+        <Expander Grid.Row="0" IsExpanded="False" Header="Advanced (PowerStig module)" Margin="0,0,0,8">
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Module path:"/>
+                <TextBox x:Name="ModulePathTextBox" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
+                <Button Grid.Column="2" Content="Change..." Click="BrowseModule_Click"/>
+            </Grid>
+        </Expander>
+
         <!-- Primary inputs: XCCDF + Output grouped -->
-        <GroupBox Header="Input and Output" Grid.Row="0" Margin="0,0,0,8">
+        <GroupBox Header="Input and Output" Grid.Row="1" Margin="0,0,0,8">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -40,23 +54,10 @@
             </Grid>
         </GroupBox>
 
-        <!-- Advanced: Module selection de-emphasized -->
-        <Expander Grid.Row="1" IsExpanded="False" Header="Advanced (PowerStig module)" Margin="0,0,0,8">
-            <Grid Margin="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Module path:"/>
-                <TextBox x:Name="ModulePathTextBox" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
-                <Button Grid.Column="2" Content="Change..." Click="BrowseModule_Click"/>
-            </Grid>
-        </Expander>
-
         <!-- Options: checkbox aligned to the right, above Messages -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
-            <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file"/>
+            <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file" IsChecked="True" Margin="0,0,12,0"/>
+            <CheckBox x:Name="SkipCompareCheckBox" Content="Skip compare step"/>
         </StackPanel>
 
         <!-- Info / Logs -->

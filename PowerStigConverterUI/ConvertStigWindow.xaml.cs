@@ -378,7 +378,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
                         .ThenBy(id => id, StringComparer.OrdinalIgnoreCase);
 
-                    AppendInfo("Failed rule conversions:", System.Windows.Media.Brushes.OrangeRed, null);
+                    AppendInfo($"Failed rule conversions ({_failedRuleIds.Count}):", System.Windows.Media.Brushes.OrangeRed, null);
                     foreach (var vId in sortedFailures)
                     {
                         _failedRuleErrors.TryGetValue(vId, out var err);
@@ -387,44 +387,54 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     }
                 }
 
-                // Emit successes sorted by numeric portion of V- IDs
-                var successIds = convertedIds
-                    .Where(id => !_failedRuleIds.Contains(id))
-                    .Select(id => id.Trim())
-                    .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
-                    .ThenBy(id => id, StringComparer.OrdinalIgnoreCase);
-
-                // Add success group header
-                AppendInfo("Successful rule conversions:", System.Windows.Media.Brushes.DarkGreen, null);
-
-                foreach (var vId in successIds)
-                    AppendInfo($"{vId} converted successfully.", System.Windows.Media.Brushes.DarkGreen, null);
-
-                // Sort missing (SV-...) by numeric portion as well
-                var missing = new System.Collections.Generic.HashSet<string>(ExtractRuleIdsFromXccdf(xccdfPath), StringComparer.OrdinalIgnoreCase);
-                missing.ExceptWith(convertedIds);
-
-                if (missing.Count == 0)
+                // Skip compare when requested
+                var skipCompare = SkipCompareCheckBox?.IsChecked == true;
+                if (!skipCompare)
                 {
-                    AppendInfo("All rule IDs present in converted output.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
-                }
-                else
-                {
-                    AppendInfo($"Missing {missing.Count} rule IDs in converted output:", System.Windows.Media.Brushes.DarkGoldenrod, null);
-                    foreach (var id in missing
+                    // Successes
+                    var successIds = convertedIds
+                        .Where(id => !_failedRuleIds.Contains(id))
                         .Select(id => id.Trim())
+                        .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(id => ExtractNumericKey(id, prefix: "SV-"))
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
                         .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
-                        .Take(100))
+                        .ToList();
+
+                    if (successIds.Count > 0)
                     {
-                        var tag = _failedRuleIds.Contains(id) ? " (conversion error)" : "";
-                        AppendInfo($" - {id}{tag}", _failedRuleIds.Contains(id) ? System.Windows.Media.Brushes.OrangeRed : System.Windows.Media.Brushes.DarkGoldenrod, null);
+                        AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                        foreach (var id in successIds.Take(100))
+                        {
+                            AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                        }
+                        if (successIds.Count > 100)
+                            AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGoldenrod, null);
                     }
-                    if (missing.Count > 100)
-                        AppendInfo($" ...and {missing.Count - 100} more", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                    else
+                    {
+                        AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGoldenrod, null);
+                    }
+
+                    // Missing (present in XCCDF but not in converted output)
+                    var missing = CompareRuleIds(xccdfPath!, destination!);
+                    if (missing.Count > 0)
+                    {
+                        AppendInfo($"Missing rule IDs ({missing.Count}) — present in XCCDF but not in converted output:", System.Windows.Media.Brushes.Firebrick, null);
+                        foreach (var mid in missing
+                            .Select(id => id.Trim())
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(id => ExtractNumericKey(id, prefix: id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase) ? "SV-" :
+                                                       id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
+                            .ThenBy(id => id, StringComparer.OrdinalIgnoreCase))
+                        {
+                            AppendInfo($" - {mid}", System.Windows.Media.Brushes.Firebrick, null);
+                        }
+                    }
+                    else
+                    {
+                        AppendInfo("No missing rule IDs detected.", System.Windows.Media.Brushes.DarkGreen, null);
+                    }
                 }
 
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);

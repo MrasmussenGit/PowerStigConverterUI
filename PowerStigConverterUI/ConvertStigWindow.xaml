@@ -1,0 +1,77 @@
+﻿<Window x:Class="PowerStigConverterUI.ConvertStigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PowerStig Converter"
+        Width="900" Height="560"
+        MinWidth="800" MinHeight="500"
+        WindowStartupLocation="CenterOwner"
+        Loaded="OnLoaded">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Primary inputs: XCCDF + Output grouped -->
+        <GroupBox Header="Input and Output" Grid.Row="0" Margin="0,0,0,8">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- XCCDF -->
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="XCCDF file:"/>
+                <TextBox x:Name="XccdfPathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,8,4" MinWidth="500"/>
+                <Button Grid.Row="0" Grid.Column="2" Content="Browse..." Click="BrowseXccdf_Click" Margin="0,0,0,4"/>
+
+                <!-- Output -->
+                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Output folder:"/>
+                <TextBox x:Name="DestinationTextBox" Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
+                <Button Grid.Row="1" Grid.Column="2" Content="Browse..." Click="BrowseDestination_Click"/>
+            </Grid>
+        </GroupBox>
+
+        <!-- Advanced: Module selection de-emphasized -->
+        <Expander Grid.Row="1" IsExpanded="False" Header="Advanced (PowerStig module)" Margin="0,0,0,8">
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Module path:"/>
+                <TextBox x:Name="ModulePathTextBox" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
+                <Button Grid.Column="2" Content="Change..." Click="BrowseModule_Click"/>
+            </Grid>
+        </Expander>
+
+        <!-- Options: checkbox aligned to the right, above Messages -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
+            <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file"/>
+        </StackPanel>
+
+        <!-- Info / Logs -->
+        <GroupBox Grid.Row="3" Header="Messages">
+            <RichTextBox x:Name="InfoRichTextBox"
+                 Margin="8"
+                 IsReadOnly="True"
+                 VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Auto"/>
+        </GroupBox>
+
+        <!-- Actions -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="ConvertButton" Content="Convert" Width="120" Margin="0,0,8,0" Click="ConvertButton_Click"/>
+            <Button x:Name="CloseButton" Content="Close" Width="120" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

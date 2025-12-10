@@ -294,12 +294,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Import-Module -Force -ErrorAction Stop -Name $Psm1
-ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSettingsFile
+ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSettingsFile:$" + (createOrgSettings ? "true" : "false") + @"
 ";
                 File.WriteAllText(tempScript, scriptContent, new UTF8Encoding(false));
 
                 // Build arguments for -File without brittle quoting
-                var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" \"{modulePath}\" \"{xccdfPath}\" \"{destination}\"";
+                var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" \"{modulePath}\" \"{xccdfPath}\" \"{destination}\" \"Windows\"";
 
                 var psi = new ProcessStartInfo
                 {
@@ -406,36 +406,35 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     }
                 }
 
-                // Skip compare when requested
+                // Always show successful conversions, regardless of Skip Compare
+                var successIds = convertedIds
+                    .Where(id => !_failedRuleIds.Contains(id))
+                    .Select(id => id.Trim())
+                    .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                    .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (successIds.Count > 0)
+                {
+                    AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
+                    foreach (var id in successIds.Take(100))
+                    {
+                        AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
+                    }
+                    if (successIds.Count > 100)
+                        AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
+                }
+                else
+                {
+                    AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
+                }
+
+                // Only perform "missing" comparison when Skip Compare is unchecked
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
-                    // Successes
-                    var successIds = convertedIds
-                        .Where(id => !_failedRuleIds.Contains(id))
-                        .Select(id => id.Trim())
-                        .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
-                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-
-                    if (successIds.Count > 0)
-                    {
-                        AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
-                        foreach (var id in successIds.Take(100))
-                        {
-                            AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
-                        }
-                        if (successIds.Count > 100)
-                            AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
-                    }
-                    else
-                    {
-                        AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
-                    }
-
-                    // Missing (present in XCCDF but not in converted output)
                     var missing = CompareRuleIds(xccdfPath!, destination!);
                     if (missing.Count > 0)
                     {
@@ -753,16 +752,16 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 return;
             }
 
-            // Always extract XCCDF data using the clicked id (SV or V) so SV-only rules populate
-            var info = RuleInfoExtractor.TryExtractRuleInfo(rawId, xccdfPath!, destination);
+            // SV rules: only use the original XCCDF; do not pass converted folder
+            var isSv = rawId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase);
+            var info = RuleInfoExtractor.TryExtractRuleInfo(rawId, xccdfPath!, isSv ? null : destination);
 
-            // If SV was clicked, resolve and annotate the linked V id for display and converted lookup
-            if (rawId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+            if (isSv)
             {
-                info.SvId ??= rawId;
-                var resolvedV = ResolveVIdForSv(rawId, xccdfPath!);
-                if (!string.IsNullOrWhiteSpace(resolvedV))
-                    info.RuleId = resolvedV!;
+                // Normalize and ensure SV metadata is present; avoid converted artifacts
+                info.SvId ??= Regex.Match(rawId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
+                info.ConvertedFile = null;
+                info.ConvertedSnippet = null;
             }
 
             var win = new RuleInfoWindow { Owner = this };
@@ -840,17 +839,69 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
     internal static class RuleInfoExtractor
     {
+        // Map an SV- ident to its owning Rule's V- id (if any)
+        // Map an SV- ident to its owning Rule's V- id (if any)
+        private static string? ResolveVIdForSv(string svId, string xccdfPath)
+        {
+            if (string.IsNullOrWhiteSpace(svId) || !svId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            // Normalize to base "SV-<digits>" to handle inputs like "SV-225223r961038_rule"
+            var baseSv = Regex.Match(svId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
+            if (string.IsNullOrWhiteSpace(baseSv)) return null;
+
+            try
+            {
+                using var reader = System.Xml.XmlReader.Create(
+                    xccdfPath,
+                    new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+
+                while (reader.Read())
+                {
+                    if (reader.NodeType == System.Xml.XmlNodeType.Element &&
+                        reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var vId = reader.GetAttribute("id")?.Trim();
+                        using var subTree = reader.ReadSubtree();
+                        while (subTree.Read())
+                        {
+                            if (subTree.NodeType == System.Xml.XmlNodeType.Element &&
+                                subTree.LocalName.Equals("ident", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var identText = subTree.ReadElementContentAsString()?.Trim();
+                                var systemAttr = subTree.GetAttribute("system");
+                                if ((!string.IsNullOrWhiteSpace(identText) && identText.StartsWith(baseSv, StringComparison.OrdinalIgnoreCase)) ||
+                                    (!string.IsNullOrWhiteSpace(systemAttr) && systemAttr.IndexOf(baseSv, StringComparison.OrdinalIgnoreCase) >= 0))
+                                {
+                                    return vId;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
         public static RuleInfo TryExtractRuleInfo(string ruleId, string xccdfPath, string? convertedFolder)
         {
             var info = new RuleInfo { RuleId = ruleId };
 
-            // From XCCDF
+            // Always fill from XCCDF (original file)
             TryFillFromXccdf(ruleId, xccdfPath, info);
 
-            // From converted outputs (if available)
-            if (!string.IsNullOrWhiteSpace(convertedFolder) && Directory.Exists(convertedFolder))
+            // Only use converted outputs for V- rules
+            if (ruleId.StartsWith("V-", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(convertedFolder) && Directory.Exists(convertedFolder))
             {
-                TryFillFromConverted(ruleId, convertedFolder!, info);
+                TryFillFromConverted(info.RuleId, convertedFolder!, info);
+            }
+            else
+            {
+                // Guard: ensure SV rules do not carry converted artifacts
+                info.ConvertedFile = null;
+                info.ConvertedSnippet = null;
             }
 
             return info;
@@ -865,35 +916,46 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 using var reader = System.Xml.XmlReader.Create(xccdfPath, settings);
                 doc.Load(reader);
 
-                // Find the owning <Rule> for either V-... (id) or SV-... (ident)
                 System.Xml.XmlNode? ruleNode = null;
+
                 if (ruleId.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
                 {
                     ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{ruleId}']");
                 }
                 else if (ruleId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
                 {
-                    // ident inner text or system attribute containing SV-#####
-                    // XPath 1.0 does not support variables, so we use string interpolation
+                    var baseSv = Regex.Match(ruleId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
                     ruleNode = doc.SelectSingleNode(
-                        $"//*[local-name()='Rule'][.//*[local-name()='ident' and (text()='{ruleId}' or contains(@system,'{ruleId}'))]]");
+                        $"//*[local-name()='Rule'][.//*[local-name()='ident' and (starts-with(normalize-space(text()),'{baseSv}') or contains(@system,'{baseSv}'))]]");
+
+                    // If found via SV ident, keep SvId and set RuleId to owning V- id if available
+                    if (ruleNode is not null)
+                    {
+                        info.SvId ??= baseSv;
+                        var vIdAttr = ruleNode.Attributes?["id"]?.Value?.Trim();
+                        if (!string.IsNullOrWhiteSpace(vIdAttr)) info.RuleId = vIdAttr;
+                    }
+                    else
+                    {
+                        // Try resolving to V- to fetch the rule node
+                        var vId = ResolveVIdForSv(ruleId, xccdfPath);
+                        if (!string.IsNullOrWhiteSpace(vId))
+                            ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{vId}']");
+                    }
                 }
 
                 if (ruleNode is null)
                     return;
 
-                // Basic attributes
-                var vIdAttr = ruleNode.Attributes?["id"]?.Value?.Trim();
-                if (!string.IsNullOrWhiteSpace(vIdAttr)) info.RuleId = vIdAttr;
+                var vIdAttr2 = ruleNode.Attributes?["id"]?.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(vIdAttr2)) info.RuleId = vIdAttr2;
 
                 var severityAttr = ruleNode.Attributes?["severity"]?.Value;
                 if (!string.IsNullOrWhiteSpace(severityAttr)) info.Severity = severityAttr;
 
-                // Title
                 var titleNode = ruleNode.SelectSingleNode(".//*[local-name()='title']");
                 if (titleNode is not null) info.Title = titleNode.InnerText.Trim();
 
-                // Description (concatenate if multiple)
                 var descNodes = ruleNode.SelectNodes(".//*[local-name()='description']");
                 if (descNodes is not null && descNodes.Count > 0)
                 {
@@ -903,26 +965,23 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     info.Description = sb.ToString().Trim();
                 }
 
-                // FixText
                 var fixNode = ruleNode.SelectSingleNode(".//*[local-name()='fixtext']");
                 if (fixNode is not null) info.FixText = fixNode.InnerText.Trim();
 
-                // ident (SV-)
-                var identNode = ruleNode.SelectSingleNode(".//*[local-name()='ident' and (starts-with(text(),'SV-') or contains(@system,'SV-'))]");
+                var identNode = ruleNode.SelectSingleNode(".//*[local-name()='ident' and (starts-with(normalize-space(text()),'SV-') or contains(@system,'SV-'))]");
                 if (identNode is not null)
                 {
                     var identText = identNode.InnerText?.Trim();
                     var systemAttr = identNode.Attributes?["system"]?.Value;
                     if (!string.IsNullOrWhiteSpace(identText) && identText.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
-                        info.SvId = identText;
+                        info.SvId ??= identText;
                     else if (!string.IsNullOrWhiteSpace(systemAttr))
                     {
-                        var m = Regex.Match(systemAttr, @"SV-\d+", RegexOptions.IgnoreCase);
-                        if (m.Success) info.SvId = m.Value;
+                        var m2 = Regex.Match(systemAttr, @"SV-\d+", RegexOptions.IgnoreCase);
+                        if (m2.Success) info.SvId ??= m2.Value;
                     }
                 }
 
-                // References (raw XML snippets to keep fidelity)
                 var refNodes = ruleNode.SelectNodes(".//*[local-name()='reference']");
                 if (refNodes is not null && refNodes.Count > 0)
                 {

@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Reflection;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -16,6 +17,10 @@ namespace PowerStigConverterUI
         public MainWindow()
         {
             InitializeComponent();
+
+            var entry = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+            var ver = entry.GetName().Version?.ToString() ?? "unknown";
+            VersionTextBlock.Text = $"Version {ver}";
         }
 
         private void ConvertStigButton_Click(object sender, RoutedEventArgs e)

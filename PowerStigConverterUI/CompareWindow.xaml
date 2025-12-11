@@ -1,0 +1,72 @@
+﻿<Window x:Class="CompareWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Compare DISA vs PowerSTIG" Height="500" Width="1100"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.ColumnSpan="2" Text="Select files and press Compare" FontWeight="Bold" Margin="0,0,0,10"/>
+        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,10">
+            <TextBlock VerticalAlignment="Center" Text="DISA file:" Margin="0,0,8,0"/>
+            <TextBox x:Name="DisaPathTextBox" Width="350" Margin="0,0,8,0"/>
+            <Button Content="Browse..." Click="BrowseDisa_Click"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock VerticalAlignment="Center" Text="PowerSTIG file:" Margin="0,0,8,0"/>
+            <TextBox x:Name="PsPathTextBox" Width="350" Margin="0,0,8,0"/>
+            <Button Content="Browse..." Click="BrowsePs_Click"/>
+        </StackPanel>
+
+        <Grid Grid.Row="2" Grid.ColumnSpan="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,8">
+                <Button Content="Compare" Width="100" Click="Compare_Click"/>
+                <TextBlock x:Name="InfoTextBlock" Margin="12,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <GroupBox Grid.Row="1" Grid.Column="0" Header="Missing (in PowerSTIG)">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="MissingCountTextBlock" Margin="0,0,0,6"/>
+                    <ListView x:Name="MissingListView" Grid.Row="1" MouseDoubleClick="MissingListView_MouseDoubleClick"/>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Row="1" Grid.Column="1" Header="Added (extra in PowerSTIG)">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="AddedCountTextBlock" Margin="0,0,0,6"/>
+                    <ListView x:Name="AddedListView" Grid.Row="1" MouseDoubleClick="AddedListView_MouseDoubleClick"/>
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Close" Width="100" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+

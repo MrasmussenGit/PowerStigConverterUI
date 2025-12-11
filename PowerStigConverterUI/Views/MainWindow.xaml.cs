@@ -26,30 +26,27 @@ public partial class MainWindow : Window
     {
         if (sender is System.Windows.Controls.ListView lv && lv.SelectedItem is string id && !string.IsNullOrWhiteSpace(id))
         {
-            var win = new RuleDetailWindow(id) { Owner = this };
+            // Prompt for the DISA XML file
+            var disaDlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select DISA XML",
+                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*"
+            };
+            if (disaDlg.ShowDialog() != true) return;
+            string disaPath = disaDlg.FileName;
+
+            // Prompt for the PowerSTIG XML file
+            var psDlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select PowerSTIG XML",
+                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*"
+            };
+            if (psDlg.ShowDialog() != true) return;
+            string psPath = psDlg.FileName;
+
+            var win = new RuleDetailWindow(id, disaPath, psPath) { Owner = this };
             win.ShowDialog();
         }
-    }
-
-    public static List<string>  GetMissingIds(string disaPath, string psPath)
-    {
-        var disa = ExtractDisaRuleIds(disaPath);
-        var ps = ExtractPowerStigRuleIds(psPath);
-        return disa.Except(ps, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
-    }
-
-    public static List<string> GetAddedIds(string disaPath, string psPath)
-    {
-        var disa = ExtractDisaRuleIds(disaPath);
-        var ps = ExtractPowerStigRuleIds(psPath);
-        return ps.Except(disa, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
-    }
-
-    void CompareButton_Click(object sender, RoutedEventArgs e)
-    {
-        var dlg = new CompareWindow();
-        dlg.Owner = this;
-        dlg.ShowDialog();
     }
 
     static string NormalizeDisaId(string? rawId)
@@ -63,6 +60,43 @@ public partial class MainWindow : Window
         if (svMatch.Success)
             return $"V-{svMatch.Groups[1].Value}";
         return id;
+    }
+
+    static string NormalizePowerStigId(string? rawId)
+    {
+        if (string.IsNullOrWhiteSpace(rawId)) return string.Empty;
+        var id = rawId.Trim();
+        // Normalize "V-123456.a" -> "V-123456"
+        var m = Regex.Match(id, @"\b(V-\d+)", RegexOptions.IgnoreCase);
+        return m.Success ? m.Groups[1].Value : id;
+    }
+
+    public static List<string> GetMissingIds(string disaPath, string psPath)
+    {
+        var disa = ExtractDisaRuleIds(disaPath);
+        var psRaw = ExtractPowerStigRuleIds(psPath);
+
+        // Treat suffix variants in PowerSTIG as matching the base DISA rule
+        var psNormalized = new HashSet<string>(psRaw.Select(NormalizePowerStigId), StringComparer.OrdinalIgnoreCase);
+
+        return disa
+            .Where(d => !psNormalized.Contains(NormalizePowerStigId(d)))
+            .OrderBy(x => x)
+            .ToList();
+    }
+
+    public static List<string> GetAddedIds(string disaPath, string psPath)
+    {
+        var disa = ExtractDisaRuleIds(disaPath);
+        var psRaw = ExtractPowerStigRuleIds(psPath);
+
+        // If a PowerSTIG id is a suffix variant of a DISA base id, it's not "added"
+        var disaNormalized = new HashSet<string>(disa.Select(NormalizePowerStigId), StringComparer.OrdinalIgnoreCase);
+
+        return psRaw
+            .Where(p => !disaNormalized.Contains(NormalizePowerStigId(p)))
+            .OrderBy(x => x)
+            .ToList();
     }
 
     static HashSet<string> ExtractDisaRuleIds(string path)
@@ -102,8 +136,15 @@ public partial class MainWindow : Window
             foreach (var rule in ruleType.Elements().Where(e => e.Name.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase)))
             {
                 var id = rule.Attribute("Id")?.Value ?? rule.Attribute("id")?.Value;
-                if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                if (!string.IsNullOrWhiteSpace(id)) ids.Add(id.Trim());
             }
         return ids;
+    }
+
+    void CompareButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new CompareWindow();
+        dlg.Owner = this;
+        dlg.ShowDialog();
     }
 }

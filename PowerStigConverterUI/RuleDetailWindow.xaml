@@ -8,7 +8,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <TextBlock x:Name="RuleIdTextBlock" FontWeight="Bold" FontSize="16" />
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <TextBlock x:Name="DetailsTextBlock" TextWrapping="Wrap" />
         </ScrollViewer>
     </Grid>

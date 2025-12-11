@@ -14,6 +14,7 @@ namespace PowerStigConverterUI
 {
     public partial class MainWindow : Window
     {
+
         public MainWindow()
         {
             InitializeComponent();
@@ -31,7 +32,9 @@ namespace PowerStigConverterUI
 
         private void CompareButton_Click(object sender, RoutedEventArgs e)
         {
-            System.Windows.MessageBox.Show("Compare clicked.", "PowerStig Converter", MessageBoxButton.OK, MessageBoxImage.Information);
+            var win = new CompareWindow { Owner = this };
+            win.ShowDialog();
+            //System.Windows.MessageBox.Show("Compare clicked.", "PowerStig Converter", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void ExitButton_Click(object sender, RoutedEventArgs e)

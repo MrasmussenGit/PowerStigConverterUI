@@ -72,18 +72,53 @@ namespace PowerStigConverterUI
             return ids.Where(s => s.Length > 0).Distinct().ToList();
         }
 
+        // DISA XCCDF: Rule id="SV-225238r1069480_rule" -> "V-225238"
+        private static IEnumerable<string> ExtractDisaRuleIds(string disaFile)
+        {
+            using var reader = System.Xml.XmlReader.Create(disaFile, new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+            while (reader.Read())
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.Name.Equals("Rule"))
+                {
+                    var id = reader.GetAttribute("id");
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+
+                    var m = Regex.Match(id, @"^SV-(\d+)", RegexOptions.IgnoreCase);
+                    if (m.Success)
+                        yield return $"V-{m.Groups[1].Value}";
+                }
+            }
+        }
+
+        // PowerSTIG converted: rule IDs are typically "V-225238"
+        private static IEnumerable<string> ExtractPsRuleIds(string psFile)
+        {
+            using var reader = System.Xml.XmlReader.Create(psFile, new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
+            while (reader.Read())
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.Name.Equals("Rule"))
+                {
+                    var id = reader.GetAttribute("id");
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+
+                    if (Regex.IsMatch(id, @"^V-\d+$", RegexOptions.IgnoreCase))
+                        yield return id.ToUpperInvariant();
+                }
+            }
+        }
+
         public static List<string> GetMissingIds(string disaFile, string psFile)
         {
-            var disaIds = ExtractIdsFromXml(disaFile); // will include SV- and V- normalized
-            var psIds = ExtractIdsFromXml(psFile);   // include whatever the converted file uses
-            return disaIds.Except(psIds).ToList();
+            var disaIds = ExtractDisaRuleIds(disaFile).Distinct().ToList();
+            var psIds = ExtractPsRuleIds(psFile).Distinct().ToList();
+            return disaIds.Except(psIds).OrderBy(x => x).ToList();
         }
 
         public static List<string> GetAddedIds(string disaFile, string psFile)
         {
-            var disaIds = ExtractIdsFromXml(disaFile);
-            var psIds = ExtractIdsFromXml(psFile);
-            return psIds.Except(disaIds).ToList();
+            var disaIds = ExtractDisaRuleIds(disaFile).Distinct().ToList();
+            var psIds = ExtractPsRuleIds(psFile).Distinct().ToList();
+            return psIds.Except(disaIds).OrderBy(x => x).ToList();
         }
 
         private void ConvertStigButton_Click(object sender, RoutedEventArgs e)

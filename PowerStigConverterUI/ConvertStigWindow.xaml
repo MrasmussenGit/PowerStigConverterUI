@@ -56,6 +56,12 @@
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
             <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file" IsChecked="True" Margin="0,0,12,0"/>
             <CheckBox x:Name="SkipCompareCheckBox" Content="Skip compare step"/>
+            <CheckBox x:Name="ShowAllConvertedCheckBox"
+                Content="Show all converted rules"
+                Margin="6,0,0,0"
+                ToolTip="If checked, displays every converted rule ID. May be slow on large STIGs."
+                IsChecked="False"
+                Click="ShowAllConvertedCheckBox_Click"/>
         </StackPanel>
 
         <!-- Info / Logs -->

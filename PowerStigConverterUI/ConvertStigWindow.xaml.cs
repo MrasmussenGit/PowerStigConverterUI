@@ -524,7 +524,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             // Build PascalCase product name (e.g., WindowsServer, DotNetFramework, IIS)
             var baseName = string.Concat(tokens.Select(t => char.ToUpperInvariant(t[0]) + t.Substring(1)));
 
-            // Normalize numeric token: "10-0"->"10.0", "4-0"->"4", "2022"->"2022"
+            // Normalize numeric token: always preserve minor (e.g., "10-0" -> "10.0")
             string? normalizedNumber = null;
             if (numericToken != null)
             {
@@ -533,7 +533,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 {
                     var a = nm.Groups["a"].Value;
                     var b = nm.Groups["b"].Success ? nm.Groups["b"].Value : null;
-                    normalizedNumber = b is null ? a : (b == "0" ? a : $"{a}.{b}");
+                    normalizedNumber = b is null ? a : $"{a}.{b}";
                 }
             }
 
@@ -543,6 +543,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
             return string.Join("-", parts) + ".xml";
         }
+
         // Add this helper method inside the ConvertStigWindow class (anywhere in the class, e.g., near other static helpers)
         private static string NormalizeVId(string id)
         {

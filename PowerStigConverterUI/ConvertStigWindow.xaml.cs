@@ -23,6 +23,10 @@ namespace PowerStigConverterUI
         private readonly System.Collections.Generic.Dictionary<string, string> _failedRuleErrors =
             new(System.StringComparer.OrdinalIgnoreCase);
 
+        private System.Collections.Generic.List<string>? _lastSuccessIds;
+        private System.Windows.Threading.DispatcherTimer? _busyTimer;
+        private DateTime _busyStart;
+
         public ConvertStigWindow()
         {
             InitializeComponent();
@@ -67,6 +71,19 @@ namespace PowerStigConverterUI
                 "PowerStig module not found",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+        }
+
+        private void RenderSuccessIds()
+        {
+            if (_lastSuccessIds is null || _lastSuccessIds.Count == 0)
+            {
+                AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
+                return;
+            }
+
+            AppendInfo($"Successfully converted rule IDs ({_lastSuccessIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
+            foreach (var id in _lastSuccessIds)
+                AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
         }
 
         private static string? FindPowerStigConvertModule()
@@ -241,6 +258,74 @@ namespace PowerStigConverterUI
             catch { /* ignore */ }
         }
 
+        private static string ResolveConvertedFullPath(string destination, string convertedFileName)
+        {
+            // Primary path (as generated)
+            var primary = Path.Combine(destination, convertedFileName);
+
+            if (File.Exists(primary))
+                return primary;
+
+            // If the filename contains "-<major>.0-", also try "-<major>-"
+            // Example: DotNetFramework-4.0-2.7.xml -> DotNetFramework-4-2.7.xml
+            var altWithMissingMinor = Regex.Replace(
+                convertedFileName,
+                @"-(\d+)\.0-",
+                m => $"-{m.Groups[1].Value}-",
+                RegexOptions.IgnoreCase);
+
+            var altMissingMinorPath = Path.Combine(destination, altWithMissingMinor);
+            if (File.Exists(altMissingMinorPath))
+                return altMissingMinorPath;
+
+            // Conversely, if the filename contains "-<major>-", also try "-<major>.0-"
+            // Example: DotNetFramework-4-2.7.xml -> DotNetFramework-4.0-2.7.xml
+            var altWithMinorZero = Regex.Replace(
+                convertedFileName,
+                @"-(\d+)-",
+                m => $"-{m.Groups[1].Value}.0-",
+                RegexOptions.IgnoreCase);
+
+            var altMinorZeroPath = Path.Combine(destination, altWithMinorZero);
+            if (File.Exists(altMinorZeroPath))
+                return altMinorZeroPath;
+
+            // As a final fallback, return the primary path (caller may handle missing file)
+            return primary;
+        }
+
+        private void SetBusy(bool isBusy, string? status = null)
+        {
+            BusyProgressBar.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+            BusyStatusText.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+            BusyStatusText.Text = isBusy ? (status ?? "Converting…") : string.Empty;
+            this.Cursor = isBusy ? System.Windows.Input.Cursors.Wait : System.Windows.Input.Cursors.Arrow;
+
+            if (isBusy)
+            {
+                _busyStart = DateTime.Now;
+                _busyTimer ??= new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(2)
+                };
+                _busyTimer.Tick -= BusyTimer_Tick;
+                _busyTimer.Tick += BusyTimer_Tick;
+                _busyTimer.Start();
+            }
+            else
+            {
+                if (_busyTimer is not null) _busyTimer.Stop();
+            }
+        }
+
+        private void BusyTimer_Tick(object? sender, EventArgs e)
+        {
+            var elapsed = DateTime.Now - _busyStart;
+            BusyStatusText.Text = $"Converting… elapsed {elapsed:mm\\:ss}";
+            // Optional lightweight heartbeat in the log without spamming:
+            // AppendInfo($"Still working… {elapsed:mm\\:ss}", System.Windows.Media.Brushes.DarkSlateGray, null);
+        }
+
         private async void ConvertButton_Click(object sender, RoutedEventArgs e)
         {
             InfoRichTextBox.Document.Blocks.Clear();
@@ -278,10 +363,11 @@ namespace PowerStigConverterUI
             }
 
             ConvertButton.IsEnabled = false;
+            SetBusy(true, "Converting…");
             AppendInfo("Starting conversion with Windows PowerShell 5.x...", System.Windows.Media.Brushes.DarkGreen, null);
 
             try
-            {   
+            {
                 // Setup ProcessStartInfo for PowerShell execution
 
                 var moduleRoot = Path.GetDirectoryName(modulePath)!; // if psm1 is under module root
@@ -373,19 +459,12 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 });
 
                 // Collect converted V- IDs to emit success/failure messages
+                string? convertedFileName = GetConvertedFileName(xccdfPath!);
+                convertedFileName = ResolveConvertedFullPath(destination!, convertedFileName!);
+
                 var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
-                    foreach (var file in Directory.EnumerateFiles(destination, "*.xml", SearchOption.TopDirectoryOnly))
-                    {
-                        foreach (var id in ExtractRuleIdsFromConverted(file))
-                            convertedIds.Add(id);
-                    }
-                }
-                catch
-                {
-                    // Ignore folder read errors
-                }
+                foreach (var id in ExtractRuleIdsFromConverted(convertedFileName))
+                    convertedIds.Add(id);
 
                 // Emit failures sorted by numeric portion of V- IDs
                 if (_failedRuleIds.Count > 0)
@@ -419,12 +498,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 if (successIds.Count > 0)
                 {
                     AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
-                    foreach (var id in successIds.Take(100))
+                    foreach (var id in successIds)
                     {
                         AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
                     }
-                    if (successIds.Count > 100)
-                        AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
                 }
                 else
                 {
@@ -435,7 +512,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
-                    var missing = CompareRuleIds(xccdfPath!, destination!);
+                    // NEW: make it clear in the Messages panel that comparison is starting
+                    AppendInfo("Comparing converted output against XCCDF (this may take a moment)…", System.Windows.Media.Brushes.DarkSlateBlue, null);
+
+                    var missing = CompareRuleIds(xccdfPath!, convertedFileName!);
                     if (missing.Count > 0)
                     {
                         AppendInfo($"Missing rule IDs ({missing.Count}) — present in XCCDF but not in converted output:", System.Windows.Media.Brushes.Firebrick, null);
@@ -443,7 +523,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                             .Select(id => id.Trim())
                             .Distinct(StringComparer.OrdinalIgnoreCase)
                             .OrderBy(id => ExtractNumericKey(id, prefix: id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase) ? "SV-" :
-                                                       id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
+                                                   id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
                             .ThenBy(id => id, StringComparer.OrdinalIgnoreCase))
                         {
                             AppendInfo($" - {mid}", System.Windows.Media.Brushes.Firebrick, null);
@@ -464,8 +544,82 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
             finally
             {
+                SetBusy(false);
                 ConvertButton.IsEnabled = true;
             }
+        }
+
+        private static string? GetConvertedFileName(string originalFileName)
+        {
+            if (string.IsNullOrWhiteSpace(originalFileName)) return null;
+
+            // Accept fully qualified paths or plain filenames
+            var name = Path.GetFileName(originalFileName);
+
+            // Examples:
+            // U_MS_Windows_Server_2022_MS_STIG_V2R6_Manual-xccdf.xml -> WindowsServer-2022-MS-2.6.xml
+            // U_MS_IIS_10-0_Site_STIG_V2R13_Manual-xccdf.xml         -> IISSite-10.0-2.13.xml
+            // U_MS_DotNet_Framework_4-0_STIG_V2R7_Manual-xccdf.xml   -> DotNetFramework-4.0-2.7.xml
+            var m = Regex.Match(
+                name,
+                @"^U_MS_(?<product>.+?)_(?:(?<edition>MS|DC)_)?STIG_(?<ver>V\d+R\d+)_Manual-xccdf\.xml$",
+                RegexOptions.IgnoreCase);
+            if (!m.Success) return null;
+
+            var productRaw = m.Groups["product"].Value;
+            var verRaw = m.Groups["ver"].Value;
+            var editionToken = m.Groups["edition"].Success ? m.Groups["edition"].Value.ToUpperInvariant() : null;
+
+            // Convert V#R# -> #.#
+            var vm = Regex.Match(verRaw, @"^V(?<major>\d+)R(?<rev>\d+)$", RegexOptions.IgnoreCase);
+            if (!vm.Success) return null;
+            var verShort = $"{vm.Groups["major"].Value}.{vm.Groups["rev"].Value}";
+
+            // Split product by underscores and normalize
+            var tokens = productRaw.Split('_', StringSplitOptions.RemoveEmptyEntries)
+                                   .Select(t => t.Trim())
+                                   .ToList();
+
+            // Handle optional "Site" suffix (append to base name)
+            var siteSuffix = tokens.Contains("Site", StringComparer.OrdinalIgnoreCase) ? "Site" : null;
+            tokens = tokens.Where(t => !string.Equals(t, "Site", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            // Identify version-like numeric token (e.g., 2022, 10-0, 4-0)
+            string? numericToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(-\d+)?$"));
+            if (numericToken != null)
+                tokens = tokens.Where(t => !string.Equals(t, numericToken, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            // Build PascalCase product name (e.g., WindowsServer, DotNetFramework, IIS)
+            var baseName = string.Concat(tokens.Select(t => char.ToUpperInvariant(t[0]) + t.Substring(1)));
+
+            // Normalize numeric token: always preserve minor (e.g., "10-0" -> "10.0")
+            string? normalizedNumber = null;
+            if (numericToken != null)
+            {
+                var nm = Regex.Match(numericToken, @"^(?<a>\d+)(?:-(?<b>\d+))?$");
+                if (nm.Success)
+                {
+                    var a = nm.Groups["a"].Value;
+                    var b = nm.Groups["b"].Success ? nm.Groups["b"].Value : null;
+                    normalizedNumber = b is null ? a : $"{a}.{b}";
+                }
+            }
+
+            var parts = new System.Collections.Generic.List<string> { baseName + (siteSuffix ?? string.Empty) };
+            if (!string.IsNullOrWhiteSpace(normalizedNumber)) parts.Add(normalizedNumber);
+            if (!string.IsNullOrWhiteSpace(editionToken)) parts.Add(editionToken); // Add MS/DC when present
+            parts.Add(verShort);
+
+            return string.Join("-", parts) + ".xml";
+        }
+
+        // Add this helper method inside the ConvertStigWindow class (anywhere in the class, e.g., near other static helpers)
+        private static string NormalizeVId(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return string.Empty;
+            // Normalize "V-123456.a" or "V-123456" to "V-123456"
+            var m = Regex.Match(id, @"^(V-\d+)", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : id;
         }
 
         // Helper: extract rule id from a compact failure message like "Rule V-278953 failed: ..."
@@ -480,31 +634,28 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             return string.IsNullOrWhiteSpace(id) ? null : id;
         }
 
-        // Helper: compare rule IDs between original XCCDF and converted output
-        private static System.Collections.Generic.HashSet<string> CompareRuleIds(string xccdfPath, string destinationFolder)
+        private static System.Collections.Generic.HashSet<string> CompareRuleIds(string xccdfPath, string convertedPath)
         {
-            var xccdfIds = ExtractRuleIdsFromXccdf(xccdfPath);
+            // Normalize converted IDs: "V-123456.a" -> "V-123456"
+            var convertedIdsRaw = ExtractRuleIdsFromConverted(convertedPath);
             var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            try
+            foreach (var id in convertedIdsRaw)
             {
-                foreach (var file in Directory.EnumerateFiles(destinationFolder, "*.xml", SearchOption.TopDirectoryOnly))
-                {
-                    foreach (var id in ExtractRuleIdsFromConverted(file))
-                        convertedIds.Add(id);
-                }
-            }
-            catch
-            {
-                // Ignore folder read errors
+                var trimmed = NormalizeVId(id);
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    convertedIds.Add(trimmed);
             }
 
+            // Extract XCCDF IDs (was missing)
+            var xccdfIds = ExtractRuleIdsFromXccdfAndConvert(xccdfPath);
+
+            // Missing = present in XCCDF but not in converted output
             var missing = new System.Collections.Generic.HashSet<string>(xccdfIds, StringComparer.OrdinalIgnoreCase);
             missing.ExceptWith(convertedIds);
             return missing;
         }
 
-        private static System.Collections.Generic.HashSet<string> ExtractRuleIdsFromXccdf(string xccdfPath)
+        private static System.Collections.Generic.HashSet<string> ExtractRuleIdsFromXccdfAndConvert(string xccdfPath)
         {
             var ids = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
@@ -540,7 +691,28 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     }
                 }
             }
-            return ids;
+            // Normalize any SV-... identifiers to V-<digits>
+            // Examples:
+            // "SV-225223r961038_rule" -> "V-225223"
+            // "SV-123456" -> "V-123456"
+            var normalized = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var svRegex = new Regex(@"SV-(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            foreach (var id in ids)
+            {
+                if (id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                {
+                    var m = svRegex.Match(id);
+                    if (m.Success)
+                    {
+                        normalized.Add($"V-{m.Groups[1].Value}");
+                        continue;
+                    }
+                }
+                normalized.Add(id);
+            }
+
+            return normalized;
         }
 
         private static System.Collections.Generic.IEnumerable<string> ExtractRuleIdsFromConverted(string convertedXmlPath)

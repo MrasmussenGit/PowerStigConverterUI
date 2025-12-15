@@ -2,11 +2,51 @@
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Reflection;
+using System.Diagnostics;
 
 namespace PowerStigConverterUI
 {
     public partial class MainWindow
     {
+        public MainWindow()
+        {
+            InitializeComponent();
+            this.Loaded += MainWindow_Loaded;
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                VersionTextBlock.Text = GetAppVersion();
+            }
+            catch
+            {
+                // Ignore version display issues; keep default text
+            }
+        }
+
+        private static string GetAppVersion()
+        {
+            var asm = Assembly.GetEntryAssembly() ?? typeof(MainWindow).Assembly;
+
+            // Prefer informational version (may include git hash/prerelease metadata)
+            var infoAttr = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            var candidate =
+                (!string.IsNullOrWhiteSpace(infoAttr?.InformationalVersion) ? infoAttr!.InformationalVersion :
+                (!string.IsNullOrWhiteSpace(FileVersionInfo.GetVersionInfo(asm.Location).ProductVersion) ? FileVersionInfo.GetVersionInfo(asm.Location).ProductVersion :
+                asm.GetName().Version?.ToString())) ?? string.Empty;
+
+            // Extract only the numeric dotted version (e.g., 1.2.3.4) and drop prerelease/build metadata
+            var m = Regex.Match(candidate, @"\d+(\.\d+){1,3}");
+            if (m.Success)
+                return m.Value;
+
+            // Fallback: if nothing matched, return the raw candidate or Unknown
+            return string.IsNullOrWhiteSpace(candidate) ? "Unknown" : candidate;
+        }
+
         // Normalize to the base numeric V-ID:
         // - "SV-254270r958480_rule" -> "V-254270"
         // - "V-254252.a"            -> "V-254252"

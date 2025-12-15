@@ -52,32 +52,49 @@
             </Grid>
         </GroupBox>
 
-        <!-- Options: checkbox aligned to the right, above Messages -->
+        <!-- Options -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
             <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file" IsChecked="True" Margin="0,0,12,0"/>
             <CheckBox x:Name="SkipCompareCheckBox" Content="Skip compare step"/>
-            <CheckBox x:Name="ShowAllConvertedCheckBox"
-                Content="Show all converted rules"
-                Margin="6,0,0,0"
-                ToolTip="If checked, displays every converted rule ID. May be slow on large STIGs."
-                IsChecked="False"
-                Click="ShowAllConvertedCheckBox_Click"/>
         </StackPanel>
 
         <!-- Info / Logs -->
         <GroupBox Grid.Row="3" Header="Messages">
             <RichTextBox x:Name="InfoRichTextBox"
-                 Margin="8"
-                 IsReadOnly="True"
-                 VerticalScrollBarVisibility="Auto"
-                 HorizontalScrollBarVisibility="Auto"
-                 PreviewMouseDoubleClick="InfoRichTextBox_PreviewMouseDoubleClick"/>
+                         Margin="8"
+                         IsReadOnly="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         PreviewMouseDoubleClick="InfoRichTextBox_PreviewMouseDoubleClick"/>
         </GroupBox>
 
-        <!-- Actions -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button x:Name="ConvertButton" Content="Convert" Width="120" Margin="0,0,8,0" Click="ConvertButton_Click"/>
-            <Button x:Name="CloseButton" Content="Close" Width="120" Click="CloseButton_Click"/>
-        </StackPanel>
+        <!-- Bottom bar: Busy left, Actions right -->
+        <Grid Grid.Row="4" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Busy indicator (left aligned) -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <ProgressBar x:Name="BusyProgressBar"
+                             Width="180"
+                             Height="16"
+                             IsIndeterminate="True"
+                             Visibility="Collapsed"/>
+                <TextBlock x:Name="BusyStatusText"
+                           Margin="8,0,0,0"
+                           Foreground="DarkSlateGray"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed"
+                           Text="Converting…"/>
+            </StackPanel>
+
+            <!-- Actions (right aligned) -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="ConvertButton" Content="Convert" Width="120" Margin="0,0,8,0" Click="ConvertButton_Click"/>
+                <Button x:Name="CloseButton" Content="Close" Width="120" Click="CloseButton_Click"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

@@ -24,6 +24,8 @@ namespace PowerStigConverterUI
             new(System.StringComparer.OrdinalIgnoreCase);
 
         private System.Collections.Generic.List<string>? _lastSuccessIds;
+        private System.Windows.Threading.DispatcherTimer? _busyTimer;
+        private DateTime _busyStart;
 
         public ConvertStigWindow()
         {
@@ -79,15 +81,9 @@ namespace PowerStigConverterUI
                 return;
             }
 
-            var showAll = ShowAllConvertedCheckBox?.IsChecked == true;
             AppendInfo($"Successfully converted rule IDs ({_lastSuccessIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
-
-            var list = showAll ? _lastSuccessIds : _lastSuccessIds.Take(100);
-            foreach (var id in list)
+            foreach (var id in _lastSuccessIds)
                 AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
-
-            if (!showAll && _lastSuccessIds.Count > 100)
-                AppendInfo($" ...and {_lastSuccessIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
         }
 
         private static string? FindPowerStigConvertModule()
@@ -191,10 +187,7 @@ namespace PowerStigConverterUI
             catch { /* ignore */ }
             return null;
         }
-        private void ShowAllConvertedCheckBox_Click(object sender, RoutedEventArgs e)
-        {
-            // You can add logic here if needed, or leave it empty if not required
-        }
+
         private static Version ParseVersion(string? s)
         {
             if (string.IsNullOrWhiteSpace(s)) return new Version(0, 0, 0, 0);
@@ -301,7 +294,37 @@ namespace PowerStigConverterUI
             return primary;
         }
 
+        private void SetBusy(bool isBusy, string? status = null)
+        {
+            BusyProgressBar.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+            BusyStatusText.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+            BusyStatusText.Text = isBusy ? (status ?? "Converting…") : string.Empty;
+            this.Cursor = isBusy ? System.Windows.Input.Cursors.Wait : System.Windows.Input.Cursors.Arrow;
 
+            if (isBusy)
+            {
+                _busyStart = DateTime.Now;
+                _busyTimer ??= new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(2)
+                };
+                _busyTimer.Tick -= BusyTimer_Tick;
+                _busyTimer.Tick += BusyTimer_Tick;
+                _busyTimer.Start();
+            }
+            else
+            {
+                if (_busyTimer is not null) _busyTimer.Stop();
+            }
+        }
+
+        private void BusyTimer_Tick(object? sender, EventArgs e)
+        {
+            var elapsed = DateTime.Now - _busyStart;
+            BusyStatusText.Text = $"Converting… elapsed {elapsed:mm\\:ss}";
+            // Optional lightweight heartbeat in the log without spamming:
+            // AppendInfo($"Still working… {elapsed:mm\\:ss}", System.Windows.Media.Brushes.DarkSlateGray, null);
+        }
 
         private async void ConvertButton_Click(object sender, RoutedEventArgs e)
         {
@@ -340,6 +363,7 @@ namespace PowerStigConverterUI
             }
 
             ConvertButton.IsEnabled = false;
+            SetBusy(true, "Converting…");
             AppendInfo("Starting conversion with Windows PowerShell 5.x...", System.Windows.Media.Brushes.DarkGreen, null);
 
             try
@@ -435,34 +459,12 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 });
 
                 // Collect converted V- IDs to emit success/failure messages
-
-                // get filename match
-
-                // from the converted directory, find the newly converted file name using the XCCDF file name
-
-
                 string? convertedFileName = GetConvertedFileName(xccdfPath!);
                 convertedFileName = ResolveConvertedFullPath(destination!, convertedFileName!);
 
-                //convertedFileName = destination + "\\" + convertedFileName;
-
-
-                //string file = Path.GetTempFileName();
                 var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var id in ExtractRuleIdsFromConverted(convertedFileName))
                     convertedIds.Add(id);
-                try
-                {
-                    //  foreach (var file in Directory.EnumerateFiles(destination, "*.xml", SearchOption.TopDirectoryOnly))
-                    // {
-                    //    foreach (var id in ExtractRuleIdsFromConverted(file))
-                    //        convertedIds.Add(id);
-                    // }
-                }
-                catch
-                {
-                    // Ignore folder read errors
-                }
 
                 // Emit failures sorted by numeric portion of V- IDs
                 if (_failedRuleIds.Count > 0)
@@ -495,17 +497,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                 if (successIds.Count > 0)
                 {
-                    var showAll = ShowAllConvertedCheckBox?.IsChecked == true;
                     AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
-
-                    var list = showAll ? successIds : successIds.Take(100);
-                    foreach (var id in list)
+                    foreach (var id in successIds)
                     {
                         AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
                     }
-
-                    if (!showAll && successIds.Count > 100)
-                        AppendInfo($" ...and {successIds.Count - 100} more", System.Windows.Media.Brushes.DarkGreen, null);
                 }
                 else
                 {
@@ -516,6 +512,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
+                    // NEW: make it clear in the Messages panel that comparison is starting
+                    AppendInfo("Comparing converted output against XCCDF (this may take a moment)…", System.Windows.Media.Brushes.DarkSlateBlue, null);
+
                     var missing = CompareRuleIds(xccdfPath!, convertedFileName!);
                     if (missing.Count > 0)
                     {
@@ -524,7 +523,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                             .Select(id => id.Trim())
                             .Distinct(StringComparer.OrdinalIgnoreCase)
                             .OrderBy(id => ExtractNumericKey(id, prefix: id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase) ? "SV-" :
-                                                       id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
+                                                   id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
                             .ThenBy(id => id, StringComparer.OrdinalIgnoreCase))
                         {
                             AppendInfo($" - {mid}", System.Windows.Media.Brushes.Firebrick, null);
@@ -545,6 +544,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
             finally
             {
+                SetBusy(false);
                 ConvertButton.IsEnabled = true;
             }
         }

@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -71,86 +69,25 @@ namespace PowerStigConverterUI
             {
                 InfoTextBlock.Text = "Comparing…";
 
-                var missing = MainWindow.GetMissingIds(disaPath!, psPath!);
-                var added = MainWindow.GetAddedIds(disaPath!, psPath!);
+                var result = RuleIdAnalysis.Compare(disaPath!, psPath!);
 
-                MissingListView.ItemsSource = missing;
-                AddedListView.ItemsSource = added;
-                MissingCountTextBlock.Text = $"Missing: {missing.Count}";
-                AddedCountTextBlock.Text = $"Added: {added.Count}";
+                MissingListView.ItemsSource = result.MissingBaseIds;
+                MissingCountTextBlock.Text = $"Missing: {result.MissingBaseIds.Count}";
 
-                // Build normalized base IDs to compute matches (V-xxxxxx)
-                var disaBase = new HashSet<string>(
-                    ExtractDisaRuleIds(disaPath!).Select(NormalizeToBaseV).Where(s => !string.IsNullOrEmpty(s)),
-                    StringComparer.OrdinalIgnoreCase);
+                MatchedListView.ItemsSource = result.MatchedBaseIds;
+                MatchedCountTextBlock.Text = $"Matched: {result.MatchedBaseIds.Count}";
 
-                var psBase = new HashSet<string>(
-                    ExtractPsRuleIds(psPath!).Select(NormalizeToBaseV).Where(s => !string.IsNullOrEmpty(s)),
-                    StringComparer.OrdinalIgnoreCase);
+                AddedListView.ItemsSource = result.AddedIds;
+                AddedCountTextBlock.Text = $"Added: {result.AddedIds.Count}";
 
-                var matched = disaBase.Intersect(psBase, StringComparer.OrdinalIgnoreCase)
-                                      .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                                      .ToList();
-
-                MatchedListView.ItemsSource = matched;
-                MatchedCountTextBlock.Text = $"Matched: {matched.Count}";
-
-                InfoTextBlock.Text = (missing.Count == 0 && added.Count == 0)
-                    ? $"No differences. Matched rules: {matched.Count}"
-                    : $"Found {missing.Count} missing and {added.Count} added.";
+                InfoTextBlock.Text = (result.MissingBaseIds.Count == 0)
+                    ? $"No missing DISA rules. Matched: {result.MatchedBaseIds.Count}, Added: {result.AddedIds.Count}"
+                    : $"Missing: {result.MissingBaseIds.Count}, Matched: {result.MatchedBaseIds.Count}, Added: {result.AddedIds.Count}";
             }
             catch (Exception ex)
             {
                 InfoTextBlock.Text = $"Compare failed: {ex.Message}";
             }
-        }
-
-        private static IEnumerable<string> ExtractDisaRuleIds(string disaFile)
-        {
-            using var reader = System.Xml.XmlReader.Create(
-                disaFile,
-                new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
-
-            while (reader.Read())
-            {
-                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
-                {
-                    var id = reader.GetAttribute("id");
-                    if (!string.IsNullOrWhiteSpace(id))
-                        yield return id.Trim();
-                }
-            }
-        }
-
-        private static IEnumerable<string> ExtractPsRuleIds(string psFile)
-        {
-            using var reader = System.Xml.XmlReader.Create(
-                psFile,
-                new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore });
-
-            while (reader.Read())
-            {
-                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.LocalName.Equals("Rule", StringComparison.OrdinalIgnoreCase))
-                {
-                    var id = reader.GetAttribute("id");
-                    if (!string.IsNullOrWhiteSpace(id))
-                        yield return id.Trim();
-                }
-            }
-        }
-
-        private static string NormalizeToBaseV(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
-            var s = raw.Trim();
-
-            var sv = System.Text.RegularExpressions.Regex.Match(s, @"^SV-(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (sv.Success) return $"V-{sv.Groups[1].Value}";
-
-            var v = System.Text.RegularExpressions.Regex.Match(s, @"^V-(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (v.Success) return $"V-{v.Groups[1].Value}";
-
-            return string.Empty;
         }
 
         private void MissingListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)

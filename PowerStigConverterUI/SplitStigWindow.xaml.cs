@@ -62,7 +62,7 @@ namespace PowerStigConverterUI
 
         private void SplitButton_Click(object sender, RoutedEventArgs e)
         {
-            OutputTextBox.Clear();
+            // Do not clear; keep history of writes
             StatusText.Text = string.Empty;
 
             var src = SourcePathTextBox.Text?.Trim();
@@ -81,7 +81,6 @@ namespace PowerStigConverterUI
             var dir = Path.GetDirectoryName(src)!;
             var nameNoExt = Path.GetFileNameWithoutExtension(src);
 
-            // Detect if source already contains MS/DC token
             bool hasEditionToken = Regex.IsMatch(nameNoExt, @"_(MS|DC)_STIG_", RegexOptions.IgnoreCase);
             if (hasEditionToken)
             {
@@ -100,10 +99,8 @@ namespace PowerStigConverterUI
                 }
             }
 
-            // Destination: optional. If empty or whitespace, use source directory.
-            var destDir = DestinationPathTextBox.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(destDir))
-                destDir = dir;
+            var destDirText = DestinationPathTextBox.Text?.Trim();
+            var destDir = string.IsNullOrWhiteSpace(destDirText) ? dir : destDirText;
 
             if (!Directory.Exists(destDir))
             {
@@ -140,12 +137,59 @@ namespace PowerStigConverterUI
                     }
                 }
 
+                var msExists = File.Exists(msPath);
+                var dcExists = File.Exists(dcPath);
                 var overwrite = OverwriteCheckBox.IsChecked == true;
 
+                if (msExists || dcExists)
+                {
+                    if (!overwrite)
+                    {
+                        var existsMsg =
+                            "The following files already exist in the selected destination:\n" +
+                            (msExists ? $"  {msPath}\n" : string.Empty) +
+                            (dcExists ? $"  {dcPath}\n" : string.Empty) +
+                            "\nDo you want to overwrite them?";
+                        var overwritePrompt = System.Windows.MessageBox.Show(
+                            existsMsg,
+                            "Files already exist",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Warning);
+
+                        if (overwritePrompt != MessageBoxResult.Yes)
+                        {
+                            StatusText.Text = "Split canceled by user.";
+                            return;
+                        }
+
+                        overwrite = true; // proceed with overwriting after explicit consent
+                    }
+                }
+
+                // Header per run with timestamp
+                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started{Environment.NewLine}");
+                OutputTextBox.AppendText($"Source: {src}{Environment.NewLine}");
+                OutputTextBox.AppendText($"Destination folder: {destDir}{Environment.NewLine}");
+
                 if (!string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
+                {
                     File.Copy(src, msPath, overwrite);
+                    OutputTextBox.AppendText($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}");
+                }
+                else
+                {
+                    OutputTextBox.AppendText($"MS target: {msPath} (skipped; same as source){Environment.NewLine}");
+                }
+
                 if (!string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
+                {
                     File.Copy(src, dcPath, overwrite);
+                    OutputTextBox.AppendText($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}");
+                }
+                else
+                {
+                    OutputTextBox.AppendText($"DC target: {dcPath} (skipped; same as source){Environment.NewLine}");
+                }
 
                 var srcLog = Path.ChangeExtension(src, ".log");
                 if (File.Exists(srcLog))
@@ -154,43 +198,21 @@ namespace PowerStigConverterUI
                     var dcLog = Path.ChangeExtension(dcPath, ".log");
 
                     File.Copy(srcLog, msLog, overwrite);
+                    OutputTextBox.AppendText($"{(File.Exists(msLog) && overwrite ? "Overwritten" : "Created")} log: {msLog}{Environment.NewLine}");
+
                     File.Copy(srcLog, dcLog, overwrite);
+                    OutputTextBox.AppendText($"{(File.Exists(dcLog) && overwrite ? "Overwritten" : "Created")} log: {dcLog}{Environment.NewLine}");
                 }
 
                 StatusText.Text = "Split completed.";
-                OutputTextBox.AppendText($"Source: {src}{Environment.NewLine}");
-                OutputTextBox.AppendText($"Destination folder: {destDir}{Environment.NewLine}");
-
-                if (string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
-                    OutputTextBox.AppendText($"MS target: {msPath} (skipped; same as source){Environment.NewLine}");
-                else
-                    OutputTextBox.AppendText($"Created: {msPath}{Environment.NewLine}");
-
-                if (string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
-                    OutputTextBox.AppendText($"DC target: {dcPath} (skipped; same as source){Environment.NewLine}");
-                else
-                    OutputTextBox.AppendText($"Created: {dcPath}{Environment.NewLine}");
-
-                var srcLogExists = File.Exists(Path.ChangeExtension(src, ".log"));
-                if (srcLogExists)
-                {
-                    var msLogPath = Path.ChangeExtension(msPath, ".log");
-                    var dcLogPath = Path.ChangeExtension(dcPath, ".log");
-
-                    if (!string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
-                        OutputTextBox.AppendText($"Log created: {msLogPath}{Environment.NewLine}");
-                    else
-                        OutputTextBox.AppendText($"Log target: {msLogPath} (skipped; same as source){Environment.NewLine}");
-
-                    if (!string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
-                        OutputTextBox.AppendText($"Log created: {dcLogPath}{Environment.NewLine}");
-                    else
-                        OutputTextBox.AppendText($"Log target: {dcLogPath} (skipped; same as source){Environment.NewLine}");
-                }
+                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split completed{Environment.NewLine}{Environment.NewLine}");
+                OutputTextBox.ScrollToEnd();
             }
             catch (Exception ex)
             {
                 StatusText.Text = $"Split failed: {ex.Message}";
+                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split failed: {ex.Message}{Environment.NewLine}{Environment.NewLine}");
+                OutputTextBox.ScrollToEnd();
             }
         }
 

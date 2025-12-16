@@ -1,0 +1,55 @@
+﻿<Window x:Class="PowerStigConverterUI.SplitStigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Split Windows OS STIG into MS/DC variants" Height="260" Width="700"
+        WindowStartupLocation="CenterOwner"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Grid Margin="12" Grid.IsSharedSizeScope="True">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Source file selection -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="Label"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="DISA STIG XML:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="SourcePathTextBox" Grid.Column="1" Margin="0,0,8,0"/>
+            <Button Grid.Column="2" Content="Browse…" Width="90" Click="Browse_Click"/>
+        </Grid>
+
+        <!-- Destination folder selection -->
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="Label"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Destination folder:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="DestinationPathTextBox" Grid.Column="1" Margin="0,0,8,0"/>
+            <Button x:Name="DestinationBrowseButton" Grid.Column="2" Content="Browse…" Width="90" Click="DestinationBrowse_Click"/>
+        </Grid>
+
+        <!-- Options -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
+            <CheckBox x:Name="OverwriteCheckBox" Content="Overwrite if files exist" IsChecked="True"/>
+        </StackPanel>
+
+        <!-- Actions and status -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button x:Name="SplitButton" Content="Split" Width="100" Click="SplitButton_Click"/>
+            <TextBlock x:Name="StatusText" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            <Button x:Name="CloseButton" Content="Close" Width="90" Margin="12,0,0,0" Click="CloseButton_Click"/>
+        </StackPanel>
+
+        <!-- Output -->
+        <TextBox x:Name="OutputTextBox" Grid.Row="4" Margin="0" IsReadOnly="True" Height="90" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

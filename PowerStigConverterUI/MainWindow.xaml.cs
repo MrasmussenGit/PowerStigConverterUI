@@ -177,6 +177,12 @@ namespace PowerStigConverterUI
             win.ShowDialog();
         }
 
+        private void SplitOsStigButton_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            var win = new SplitStigWindow { Owner = this };
+            win.ShowDialog();
+        }
+
         private void ExitButton_Click(object sender, RoutedEventArgs e)
         {
             this.Close();

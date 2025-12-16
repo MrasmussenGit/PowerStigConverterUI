@@ -1,117 +1,126 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using Microsoft.Win32;
-using PowerStigConverterUI; // Change this to the correct namespace if needed
-using System.Xml.Linq;
 
-public partial class CompareWindow : Window
+namespace PowerStigConverterUI
 {
-    public CompareWindow()
+    public partial class CompareWindow : Window
     {
-        InitializeComponent();
-    }
-
-    void BrowseDisa_Click(object sender, RoutedEventArgs e)
-    {
-        var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*" };
-        if (dlg.ShowDialog() == true) DisaPathTextBox.Text = dlg.FileName;
-    }
-
-    void BrowsePs_Click(object sender, RoutedEventArgs e)
-    {
-        var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*" };
-        if (dlg.ShowDialog() == true) PsPathTextBox.Text = dlg.FileName;
-    }
-
-    void Compare_Click(object sender, RoutedEventArgs e)
-    {
-        var disaPath = DisaPathTextBox.Text;
-        var psPath = PsPathTextBox.Text;
-
-        if (string.IsNullOrWhiteSpace(disaPath) || string.IsNullOrWhiteSpace(psPath))
+        public CompareWindow()
         {
-            System.Windows.MessageBox.Show("Please select both files before comparing.");
-            return;
+            InitializeComponent();
         }
 
-        // Warn if the PowerSTIG file looks like an organizational (.org.default) file
-        if (IsOrgDefaultPowerStigFile(psPath))
+        private void BrowseDisa_Click(object sender, RoutedEventArgs e)
         {
-            var result = System.Windows.MessageBox.Show(
-                "The selected PowerSTIG file appears to be an organizational settings (.org.default) file." +
-                "\nThese files do not contain the converted rule details and are not suitable for comparison." +
-                "\n\nAre you sure you want to compare with this file?",
-                "Organizational Settings File Detected",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (result != MessageBoxResult.Yes) return;
-        }
-
-        try
-        {
-            var missing = MainWindow.GetMissingIds(disaPath, psPath);
-            var added = MainWindow.GetAddedIds(disaPath, psPath);
-
-            MissingCountTextBlock.Text = $"Count: {missing.Count}";
-            AddedCountTextBlock.Text = $"Count: {added.Count}";
-            MissingListView.ItemsSource = missing;
-            AddedListView.ItemsSource = added;
-
-            InfoTextBlock.Text = $"Compared successfully. Missing: {missing.Count}, Added: {added.Count}";
-        }
-        catch (Exception ex)
-        {
-            System.Windows.MessageBox.Show($"Compare failed: {ex.Message}");
-        }
-    }
-
-    private static bool IsOrgDefaultPowerStigFile(string path)
-    {
-        try
-        {
-            // File name clue: contains ".org.default"
-            var fileName = System.IO.Path.GetFileName(path);
-            if (!string.IsNullOrEmpty(fileName) &&
-                fileName.Contains(".org.default", StringComparison.OrdinalIgnoreCase))
+            var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                return true;
-            }
-
-            // Content clue: root element is OrganizationalSettings
-            var doc = XDocument.Load(path);
-            var root = doc.Root;
-            if (root != null && string.Equals(root.Name.LocalName, "OrganizationalSettings", StringComparison.OrdinalIgnoreCase))
+                Title = "Select DISA XCCDF XML",
+                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+            if (dlg.ShowDialog(this) == true)
             {
-                return true;
+                DisaPathTextBox.Text = dlg.FileName;
             }
         }
-        catch
-        {
-            // If it can't be parsed, don't treat as org file here; comparison will handle errors.
-        }
-        return false;
-    }
 
-    private void MissingListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is System.Windows.Controls.ListView lv && lv.SelectedItem is string id && !string.IsNullOrWhiteSpace(id))
+        private void BrowsePs_Click(object sender, RoutedEventArgs e)
         {
-            var win = new RuleDetailWindow(id, DisaPathTextBox.Text, PsPathTextBox.Text) { Owner = this };
-            win.ShowDialog();
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Converted PowerSTIG XML",
+                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+            if (dlg.ShowDialog(this) == true)
+            {
+                PsPathTextBox.Text = dlg.FileName;
+            }
         }
-    }
 
-    private void AddedListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is System.Windows.Controls.ListView lv && lv.SelectedItem is string id && !string.IsNullOrWhiteSpace(id))
+        private void Compare_Click(object sender, RoutedEventArgs e)
         {
-            var win = new RuleDetailWindow(id, DisaPathTextBox.Text, PsPathTextBox.Text) { Owner = this };
-            win.ShowDialog();
+            InfoTextBlock.Text = string.Empty;
+            MissingListView.ItemsSource = null;
+            AddedListView.ItemsSource = null;
+            MatchedListView.ItemsSource = null;
+            MissingCountTextBlock.Text = string.Empty;
+            AddedCountTextBlock.Text = string.Empty;
+            MatchedCountTextBlock.Text = string.Empty;
+
+            var disaPath = DisaPathTextBox.Text?.Trim();
+            var psPath = PsPathTextBox.Text?.Trim();
+
+            if (string.IsNullOrWhiteSpace(disaPath) || !File.Exists(disaPath))
+            {
+                InfoTextBlock.Text = "Invalid DISA XCCDF path.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(psPath) || !File.Exists(psPath))
+            {
+                InfoTextBlock.Text = "Invalid PowerSTIG XML path.";
+                return;
+            }
+
+            try
+            {
+                InfoTextBlock.Text = "Comparing…";
+
+                var result = RuleIdAnalysis.Compare(disaPath!, psPath!);
+
+                MissingListView.ItemsSource = result.MissingBaseIds;
+                MissingCountTextBlock.Text = $"Missing: {result.MissingBaseIds.Count}";
+
+                MatchedListView.ItemsSource = result.MatchedBaseIds;
+                MatchedCountTextBlock.Text = $"Matched: {result.MatchedBaseIds.Count}";
+
+                AddedListView.ItemsSource = result.AddedIds;
+                AddedCountTextBlock.Text = $"Added: {result.AddedIds.Count}";
+
+                InfoTextBlock.Text = (result.MissingBaseIds.Count == 0)
+                    ? $"No missing DISA rules. Matched: {result.MatchedBaseIds.Count}, Added: {result.AddedIds.Count}"
+                    : $"Missing: {result.MissingBaseIds.Count}, Matched: {result.MatchedBaseIds.Count}, Added: {result.AddedIds.Count}";
+            }
+            catch (Exception ex)
+            {
+                InfoTextBlock.Text = $"Compare failed: {ex.Message}";
+            }
+        }
+
+        private void MissingListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (MissingListView.SelectedItem is string id &&
+                !string.IsNullOrWhiteSpace(DisaPathTextBox.Text) && File.Exists(DisaPathTextBox.Text) &&
+                !string.IsNullOrWhiteSpace(PsPathTextBox.Text) && File.Exists(PsPathTextBox.Text))
+            {
+                var win = new RuleDetailWindow(id, DisaPathTextBox.Text, PsPathTextBox.Text) { Owner = this };
+                win.ShowDialog();
+            }
+        }
+
+        private void AddedListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (AddedListView.SelectedItem is string id &&
+                !string.IsNullOrWhiteSpace(DisaPathTextBox.Text) && File.Exists(DisaPathTextBox.Text) &&
+                !string.IsNullOrWhiteSpace(PsPathTextBox.Text) && File.Exists(PsPathTextBox.Text))
+            {
+                var win = new RuleDetailWindow(id, DisaPathTextBox.Text, PsPathTextBox.Text) { Owner = this };
+                win.ShowDialog();
+            }
+        }
+
+        private void MatchedListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (MatchedListView.SelectedItem is string id &&
+                !string.IsNullOrWhiteSpace(DisaPathTextBox.Text) && File.Exists(DisaPathTextBox.Text) &&
+                !string.IsNullOrWhiteSpace(PsPathTextBox.Text) && File.Exists(PsPathTextBox.Text))
+            {
+                var win = new RuleDetailWindow(id, DisaPathTextBox.Text, PsPathTextBox.Text) { Owner = this };
+                win.ShowDialog();
+            }
         }
     }
 }

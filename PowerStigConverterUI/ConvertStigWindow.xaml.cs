@@ -636,23 +636,8 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
         private static System.Collections.Generic.HashSet<string> CompareRuleIds(string xccdfPath, string convertedPath)
         {
-            // Normalize converted IDs: "V-123456.a" -> "V-123456"
-            var convertedIdsRaw = ExtractRuleIdsFromConverted(convertedPath);
-            var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var id in convertedIdsRaw)
-            {
-                var trimmed = NormalizeVId(id);
-                if (!string.IsNullOrWhiteSpace(trimmed))
-                    convertedIds.Add(trimmed);
-            }
-
-            // Extract XCCDF IDs (was missing)
-            var xccdfIds = ExtractRuleIdsFromXccdfAndConvert(xccdfPath);
-
-            // Missing = present in XCCDF but not in converted output
-            var missing = new System.Collections.Generic.HashSet<string>(xccdfIds, StringComparer.OrdinalIgnoreCase);
-            missing.ExceptWith(convertedIds);
-            return missing;
+            var result = RuleIdAnalysis.Compare(xccdfPath, convertedPath);
+            return new System.Collections.Generic.HashSet<string>(result.MissingBaseIds, System.StringComparer.OrdinalIgnoreCase);
         }
 
         private static System.Collections.Generic.HashSet<string> ExtractRuleIdsFromXccdfAndConvert(string xccdfPath)

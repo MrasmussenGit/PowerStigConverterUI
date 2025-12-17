@@ -19,7 +19,7 @@ namespace PowerStigConverterUI
         {
             try
             {
-                VersionTextBlock.Text = GetAppVersion();
+                VersionTextBlock.Text = $"Version: {GetAppVersion()}";
             }
             catch
             {

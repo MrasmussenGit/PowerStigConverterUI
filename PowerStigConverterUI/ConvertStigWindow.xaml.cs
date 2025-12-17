@@ -260,38 +260,66 @@ namespace PowerStigConverterUI
 
         private static string ResolveConvertedFullPath(string destination, string convertedFileName)
         {
-            // Primary path (as generated)
-            var primary = Path.Combine(destination, convertedFileName);
+            static string Combine(string dest, string n) => Path.Combine(dest, n);
 
-            if (File.Exists(primary))
-                return primary;
+            // Start with the primary name
+            var candidates = new System.Collections.Generic.List<string> { convertedFileName };
 
-            // If the filename contains "-<major>.0-", also try "-<major>-"
-            // Example: DotNetFramework-4.0-2.7.xml -> DotNetFramework-4-2.7.xml
-            var altWithMissingMinor = Regex.Replace(
-                convertedFileName,
-                @"-(\d+)\.0-",
-                m => $"-{m.Groups[1].Value}-",
-                RegexOptions.IgnoreCase);
+            // If the primary contains an edition token (MS/DC), also try without it and at the end
+            var nameNoExt = Path.GetFileNameWithoutExtension(convertedFileName);
+            var ext = Path.GetExtension(convertedFileName);
+            var parts = nameNoExt.Split('-', StringSplitOptions.RemoveEmptyEntries).ToList();
+            var edIdx = parts.FindIndex(p => p.Equals("MS", StringComparison.OrdinalIgnoreCase) || p.Equals("DC", StringComparison.OrdinalIgnoreCase));
+            if (edIdx >= 0)
+            {
+                var edition = parts[edIdx];
 
-            var altMissingMinorPath = Path.Combine(destination, altWithMissingMinor);
-            if (File.Exists(altMissingMinorPath))
-                return altMissingMinorPath;
+                // a) Without edition
+                var noEd = parts.Where((p, i) => i != edIdx).ToArray();
+                candidates.Add(string.Join("-", noEd) + ext);
 
-            // Conversely, if the filename contains "-<major>-", also try "-<major>.0-"
-            // Example: DotNetFramework-4-2.7.xml -> DotNetFramework-4.0-2.7.xml
-            var altWithMinorZero = Regex.Replace(
-                convertedFileName,
-                @"-(\d+)-",
-                m => $"-{m.Groups[1].Value}.0-",
-                RegexOptions.IgnoreCase);
+                // b) Edition at the very end
+                var edAtEnd = parts.Where((p, i) => i != edIdx).Concat(new[] { edition }).ToArray();
+                candidates.Add(string.Join("-", edAtEnd) + ext);
+            }
 
-            var altMinorZeroPath = Path.Combine(destination, altWithMinorZero);
-            if (File.Exists(altMinorZeroPath))
-                return altMinorZeroPath;
+            // For each candidate, also consider 4 vs 4.0 variants (module differences)
+            static System.Collections.Generic.IEnumerable<string> NumberVariants(string fileName)
+            {
+                yield return fileName;
 
-            // As a final fallback, return the primary path (caller may handle missing file)
-            return primary;
+                var a = Regex.Replace(fileName, @"-(\d+)\.0-", m => $"-{m.Groups[1].Value}-", RegexOptions.IgnoreCase);
+                if (!string.Equals(a, fileName, StringComparison.OrdinalIgnoreCase)) yield return a;
+
+                var b = Regex.Replace(fileName, @"-(\d+)-", m => $"-{m.Groups[1].Value}.0-", RegexOptions.IgnoreCase);
+                if (!string.Equals(b, fileName, StringComparison.OrdinalIgnoreCase)) yield return b;
+            }
+
+            foreach (var cand in candidates.SelectMany(NumberVariants).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var path = Combine(destination, cand);
+                if (File.Exists(path))
+                    return path;
+            }
+
+            // Fallback: search by product + version while ignoring edition placement
+            try
+            {
+                if (parts.Count >= 2)
+                {
+                    var version = parts.Last();
+                    var product = string.Join("-", parts.Take(parts.Count - 1).Where((p, i) => i != edIdx));
+                    var match = Directory.EnumerateFiles(destination, "*.xml", SearchOption.TopDirectoryOnly)
+                                         .FirstOrDefault(f =>
+                                             Path.GetFileName(f).StartsWith(product + "-", StringComparison.OrdinalIgnoreCase) &&
+                                             Path.GetFileNameWithoutExtension(f).EndsWith("-" + version, StringComparison.OrdinalIgnoreCase));
+                    if (match != null) return match;
+                }
+            }
+            catch { /* ignore */ }
+
+            // As a final fallback, return the primary path
+            return Combine(destination, convertedFileName);
         }
 
         private void SetBusy(bool isBusy, string? status = null)
@@ -369,7 +397,6 @@ namespace PowerStigConverterUI
             try
             {
                 // Setup ProcessStartInfo for PowerShell execution
-
                 var moduleRoot = Path.GetDirectoryName(modulePath)!; // if psm1 is under module root
                 var tempScript = Path.Combine(Path.GetTempPath(), $"PowerStigConvert_{Guid.NewGuid():N}.ps1");
                 var scriptContent = @"
@@ -458,12 +485,65 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         throw new InvalidOperationException($"Windows PowerShell exited with code {proc.ExitCode}. First error:\n{stdErr.Trim()}");
                 });
 
-                // Collect converted V- IDs to emit success/failure messages
-                string? convertedFileName = GetConvertedFileName(xccdfPath!);
-                convertedFileName = ResolveConvertedFullPath(destination!, convertedFileName!);
+                // Resolve actual output, then rename to ensure edition (MS/DC) is preserved in filename
+                string? expectedFileName = GetConvertedFileName(xccdfPath!); // includes edition when present
+                string resolvedPath = ResolveConvertedFullPath(destination!, expectedFileName!);
 
+                // If the module emitted a file without the edition token, rename it to the expected edition form
+                if (!string.IsNullOrWhiteSpace(expectedFileName))
+                {
+                    var hasEditionToken = Regex.IsMatch(expectedFileName, @"-(MS|DC)-", RegexOptions.IgnoreCase);
+                    var expectedPath = Path.Combine(destination!, expectedFileName);
+                    if (hasEditionToken && !string.Equals(resolvedPath, expectedPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(expectedPath)!);
+                            File.Move(resolvedPath, expectedPath, overwrite: true);
+                            AppendInfo($"Renamed converted output to preserve edition token: {expectedPath}");
+                            resolvedPath = expectedPath;
+                        }
+                        catch (Exception renameEx)
+                        {
+                            AppendInfo($"Warning: could not rename converted file to include edition token: {renameEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                        }
+                    }
+
+                    // Also ensure the .org.default.xml preserves the edition token
+                    if (createOrgSettings && hasEditionToken)
+                    {
+                        var expectedOrgFileName = Path.GetFileNameWithoutExtension(expectedFileName) + ".org.default.xml";
+                        var expectedOrgPath = Path.Combine(destination!, expectedOrgFileName);
+
+                        // Resolve whatever name the module produced and rename if needed
+                        var resolvedOrgPath = ResolveConvertedFullPath(destination!, expectedOrgFileName);
+                        if (!string.Equals(resolvedOrgPath, expectedOrgPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (File.Exists(resolvedOrgPath))
+                            {
+                                try
+                                {
+                                    File.Move(resolvedOrgPath, expectedOrgPath, overwrite: true);
+                                    AppendInfo($"Renamed org settings to preserve edition token: {expectedOrgPath}");
+                                }
+                                catch (Exception orgRenameEx)
+                                {
+                                    AppendInfo($"Warning: could not rename org settings file to include edition token: {orgRenameEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                                }
+                            }
+                            else
+                            {
+                                AppendInfo($"Warning: org settings file not found to rename. Expected to resolve from: {resolvedOrgPath}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                            }
+                        }
+                    }
+                }
+
+                var convertedFilePath = resolvedPath;
+
+                // Collect converted V- IDs to emit success/failure messages
                 var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var id in ExtractRuleIdsFromConverted(convertedFileName))
+                foreach (var id in ExtractRuleIdsFromConverted(convertedFilePath))
                     convertedIds.Add(id);
 
                 // Emit failures sorted by numeric portion of V- IDs
@@ -512,10 +592,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
-                    // NEW: make it clear in the Messages panel that comparison is starting
-                    AppendInfo("Comparing converted output against XCCDF (this may take a moment)…", System.Windows.Media.Brushes.DarkSlateBlue, null);
+                    // Show compare notice and the resolved converted file path
+                    AppendInfo($"Comparing converted output against XCCDF (this may take a moment)…{Environment.NewLine}Converted file: {convertedFilePath}",
+                        System.Windows.Media.Brushes.DarkSlateBlue, null);
 
-                    var missing = CompareRuleIds(xccdfPath!, convertedFileName!);
+                    var missing = CompareRuleIds(xccdfPath!, convertedFilePath);
                     if (missing.Count > 0)
                     {
                         AppendInfo($"Missing rule IDs ({missing.Count}) — present in XCCDF but not in converted output:", System.Windows.Media.Brushes.Firebrick, null);

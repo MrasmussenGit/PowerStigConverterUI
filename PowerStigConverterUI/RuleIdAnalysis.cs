@@ -7,6 +7,7 @@ using System.Xml;
 
 namespace PowerStigConverterUI
 {
+    //comment
     public sealed class RuleIdCompareResult
     {
         public IReadOnlyList<string> MissingBaseIds { get; init; } = Array.Empty<string>();

@@ -630,50 +630,294 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
         }
 
+        // In GetConvertedFileName, replace how endIdx is computed to avoid matching "_Visio" as the version marker.
         private static string? GetConvertedFileName(string originalFileName)
         {
             if (string.IsNullOrWhiteSpace(originalFileName)) return null;
 
-            // Accept fully qualified paths or plain filenames
             var name = Path.GetFileName(originalFileName);
 
-            // Examples:
-            // U_MS_Windows_Server_2022_MS_STIG_V2R6_Manual-xccdf.xml -> WindowsServer-2022-MS-2.6.xml
-            // U_MS_IIS_10-0_Site_STIG_V2R13_Manual-xccdf.xml         -> IISSite-10.0-2.13.xml
-            // U_MS_DotNet_Framework_4-0_STIG_V2R7_Manual-xccdf.xml   -> DotNetFramework-4.0-2.7.xml
-            var m = Regex.Match(
-                name,
-                @"^U_MS_(?<product>.+?)_(?:(?<edition>MS|DC)_)?STIG_(?<ver>V\d+R\d+)_Manual-xccdf\.xml$",
-                RegexOptions.IgnoreCase);
+            // Require "VxRx", "-xccdf" and ".xml"
+            var m = Regex.Match(name, @".*V\d+R\d+.*-xccdf\.xml$", RegexOptions.IgnoreCase);
             if (!m.Success) return null;
 
-            var productRaw = m.Groups["product"].Value;
-            var verRaw = m.Groups["ver"].Value;
-            var editionToken = m.Groups["edition"].Success ? m.Groups["edition"].Value.ToUpperInvariant() : null;
+            // Version short x.y from VxRy
+            var ver = Regex.Match(name, @"V(?<maj>\d+)R(?<min>\d+)", RegexOptions.IgnoreCase);
+            if (!ver.Success) return null;
+            var verShort = $"{ver.Groups["maj"].Value}.{ver.Groups["min"].Value}";
+            var verToken = ver.Value; // e.g., "V1R4"
 
-            // Convert V#R# -> #.#
-            var vm = Regex.Match(verRaw, @"^V(?<major>\d+)R(?<rev>\d+)$", RegexOptions.IgnoreCase);
-            if (!vm.Success) return null;
-            var verShort = $"{vm.Groups["major"].Value}.{vm.Groups["rev"].Value}";
+            // Extract product segment between "U_" and one of markers
+            string productRaw = string.Empty;
+            int uIdx = name.IndexOf("U_", StringComparison.OrdinalIgnoreCase);
+            if (uIdx >= 0)
+            {
+                uIdx += 2;
+                int stigIdx = name.IndexOf("_STIG", uIdx, StringComparison.OrdinalIgnoreCase);
 
-            // Split product by underscores and normalize
-            var tokens = productRaw.Split('_', StringSplitOptions.RemoveEmptyEntries)
-                                   .Select(t => t.Trim())
-                                   .ToList();
+                // FIX: only treat the version marker when it is the real "_V<digits>R<digits>", not any "_V..." (e.g., "_Visio")
+                int vIdx = name.IndexOf("_" + verToken, uIdx, StringComparison.OrdinalIgnoreCase);
 
-            // Handle optional "Site" suffix (append to base name)
-            var siteSuffix = tokens.Contains("Site", StringComparer.OrdinalIgnoreCase) ? "Site" : null;
-            tokens = tokens.Where(t => !string.Equals(t, "Site", StringComparison.OrdinalIgnoreCase)).ToList();
+                int manualIdx = name.IndexOf("_Manual", uIdx, StringComparison.OrdinalIgnoreCase);
+                int endIdx = new[] { stigIdx, vIdx, manualIdx }.Where(i => i >= 0).DefaultIfEmpty(-1).Min();
+                if (endIdx > uIdx) productRaw = name.Substring(uIdx, endIdx - uIdx);
+            }
 
-            // Identify version-like numeric token (e.g., 2022, 10-0, 4-0)
-            string? numericToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(-\d+)?$"));
-            if (numericToken != null)
-                tokens = tokens.Where(t => !string.Equals(t, numericToken, StringComparison.OrdinalIgnoreCase)).ToList();
+            var tokens = productRaw.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).ToList();
+            if (tokens.Count == 0) return null;
 
-            // Build PascalCase product name (e.g., WindowsServer, DotNetFramework, IIS)
-            var baseName = string.Concat(tokens.Select(t => char.ToUpperInvariant(t[0]) + t.Substring(1)));
+            // Helpers
+            static string Pascal(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s.Substring(1);
+            static string JoinPascal(IEnumerable<string> parts) => string.Concat(parts.Select(Pascal));
 
-            // Normalize numeric token: always preserve minor (e.g., "10-0" -> "10.0")
+            // Special case: combined Windows 2012 and 2012 R2 STIG (no explicit "Server" token in source)
+            // Example: U_MS_Windows_2012_and_2012_R2_MS_STIG_V3R4_Manual-xccdf.xml
+            if (name.IndexOf("_Windows_2012_and_2012_R2_", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                // Prefer explicit edition from filename pattern
+                string? edition = null;
+                if (name.IndexOf("_MS_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "MS";
+                else if (name.IndexOf("_DC_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "DC";
+                else
+                {
+                    // Fallback to tokens if present (rare)
+                    if (tokens.Any(t => t.Equals("MS", StringComparison.OrdinalIgnoreCase))) edition = "MS";
+                    else if (tokens.Any(t => t.Equals("DC", StringComparison.OrdinalIgnoreCase))) edition = "DC";
+                }
+
+                var baseName = "WindowsServer-2012R2";
+                return edition is null
+                    ? $"{baseName}-{verShort}.xml"
+                    : $"{baseName}-{edition}-{verShort}.xml";
+            }
+
+
+            // 1) Adobe Acrobat Pro => Adobe-AcrobatPro-x.y.xml
+            if (tokens.Count >= 3 &&
+                tokens[0].Equals("Adobe", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Acrobat", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Pro", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Adobe-AcrobatPro-{verShort}.xml";
+            }
+
+            // 2) Adobe Acrobat Reader => Adobe-AcrobatReader-x.y.xml
+            if (tokens.Count >= 3 &&
+                tokens[0].Equals("Adobe", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Acrobat", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Reader", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Adobe-AcrobatReader-{verShort}.xml";
+            }
+
+            // 3) Firefox => FireFox-All-x.y.xml
+            if (tokens.Count >= 1 &&
+                tokens[0].Equals("MOZ", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Any(t => t.Equals("Firefox", StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"FireFox-All-{verShort}.xml";
+            }
+
+            // 4) Chrome => Google-Chrome-x.y.xml
+            if (tokens.Count >= 1 &&
+                tokens[0].Equals("Google", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Any(t => t.Equals("Chrome", StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"Google-Chrome-{verShort}.xml";
+            }
+
+            // 5) MS Edge => MS-Edge-x.y.xml
+            if (tokens.Count >= 1 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Any(t => t.Equals("Edge", StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"MS-Edge-{verShort}.xml";
+            }
+
+            // 6) Internet Explorer 11 => InternetExplorer-11-x.y.xml
+            if (tokens.Count >= 1 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Any(t => t.Equals("IE11", StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"InternetExplorer-11-{verShort}.xml";
+            }
+
+            // 7) DotNet Framework 4-0 => DotNetFramework-4-2.x.xml
+            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("DotNet", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Framework", StringComparison.OrdinalIgnoreCase))
+            {
+                var num = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(?:-\d+)?$")) ?? "4-0";
+                var normalizedMajor = num.Replace("-0", "");
+                return $"DotNetFramework-{normalizedMajor}-{verShort}.xml";
+            }
+
+            // 8) IIS Server/Site => IISServer-10.0-x.y.xml / IISSite-10.0-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("IIS", StringComparison.OrdinalIgnoreCase))
+            {
+                var isServer = tokens.Any(t => t.Equals("Server", StringComparison.OrdinalIgnoreCase));
+                var isSite = tokens.Any(t => t.Equals("Site", StringComparison.OrdinalIgnoreCase));
+                var versionToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(?:-\d+)?$"));
+                var versionNum = versionToken is null ? "" :
+                    Regex.Replace(versionToken, @"^(\d+)-(\d+)$", "$1.$2");
+                var baseName = isServer ? "IISServer" : isSite ? "IISSite" : "IIS";
+                return string.IsNullOrEmpty(versionNum)
+                    ? $"{baseName}-{verShort}.xml"
+                    : $"{baseName}-{versionNum}-{verShort}.xml";
+            }
+
+            // 9) Oracle JRE 8 Windows => OracleJRE-8-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("Oracle", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("JRE", StringComparison.OrdinalIgnoreCase))
+            {
+                var v = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+$")) ?? "8";
+                return $"OracleJRE-{v}-{verShort}.xml";
+            }
+
+            // 10) SQL Server
+            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("SQL", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Server", StringComparison.OrdinalIgnoreCase))
+            {
+                var year = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d{4}$")) ?? "2012";
+                var flavor = tokens.Any(t => t.Equals("Database", StringComparison.OrdinalIgnoreCase)) ? "Database" : "Instance";
+                return $"SqlServer-{year}-{flavor}-{verShort}.xml";
+            }
+
+            // 11) vSphere ESXi => Vsphere-6.5-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("VMW", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("vSphere", StringComparison.OrdinalIgnoreCase))
+            {
+                var versionToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(?:-\d+)?$")) ?? "6-5";
+                var versionNum = Regex.Replace(versionToken, @"^(\d+)-(\d+)$", "$1.$2");
+                return $"Vsphere-{versionNum}-{verShort}.xml";
+            }
+
+            // 12) Oracle Linux => OracleLinux-<major>-x.y.xml
+            if (tokens.Count >= 1 && tokens[0].Equals("OracleLinux", StringComparison.OrdinalIgnoreCase) ||
+                (tokens.Count >= 2 && tokens[0].Equals("Oracle", StringComparison.OrdinalIgnoreCase) && tokens[1].Equals("Linux", StringComparison.OrdinalIgnoreCase)))
+            {
+                var major = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+$")) ?? "8";
+                return $"OracleLinux-{major}-{verShort}.xml";
+            }
+
+            // 13) RHEL => RHEL-<major>-x.y.xml
+            if (tokens.Count >= 1 && tokens[0].Equals("RHEL", StringComparison.OrdinalIgnoreCase))
+            {
+                var major = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+$")) ?? "7";
+                return $"RHEL-{major}-{verShort}.xml";
+            }
+
+            // 14) Ubuntu => Ubuntu-18.04-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("CAN", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Ubuntu", StringComparison.OrdinalIgnoreCase))
+            {
+                var versionToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d{2}-\d{2}$")) ?? "18-04";
+                var versionNum = versionToken.Replace('-', '.');
+                return $"Ubuntu-{versionNum}-{verShort}.xml";
+            }
+
+            // 15) Windows Client (10/11) => WindowsClient-<major>-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
+                (tokens.Any(t => t.Equals("10", StringComparison.OrdinalIgnoreCase)) || tokens.Any(t => t.Equals("11", StringComparison.OrdinalIgnoreCase))) &&
+                !tokens.Any(t => t.Equals("Server", StringComparison.OrdinalIgnoreCase)))
+            {
+                var major = tokens.FirstOrDefault(t => t.Equals("10", StringComparison.OrdinalIgnoreCase) || t.Equals("11", StringComparison.OrdinalIgnoreCase)) ?? "10";
+                return $"WindowsClient-{major}-{verShort}.xml";
+            }
+
+            // 16) Windows Defender Antivirus => WindowsDefender-All-x.y.xml
+            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Defender", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"WindowsDefender-All-{verShort}.xml";
+            }
+
+            // 17) Windows Firewall => WindowsFirewall-All-x.y.xml
+            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
+                tokens[2].Equals("Firewall", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"WindowsFirewall-All-{verShort}.xml";
+            }
+
+            // 18) Windows DNS Server 2012/2012R2 => WindowsDnsServer-2012R2-x.y.xml
+            if (tokens.Count >= 2
+                && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase)
+                && tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase)
+                && tokens.Any(t => t.Equals("DNS", StringComparison.OrdinalIgnoreCase)))
+            {
+                // Prefer 2012R2 to match processed outputs; normalize plain 2012 to 2012R2
+                var yearTok = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2012|2012R2)$", RegexOptions.IgnoreCase));
+                var year = (yearTok != null && yearTok.Equals("2012", StringComparison.OrdinalIgnoreCase)) ? "2012R2" : (yearTok ?? "2012R2");
+                return $"WindowsDnsServer-{year}-{verShort}.xml";
+            }
+
+            // 19) Windows Server editions and no-edition server
+            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Any(t => t.Equals("Server", StringComparison.OrdinalIgnoreCase)))
+            {
+                var year = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2012R2|2016|2019|2022)$", RegexOptions.IgnoreCase)) ?? "2016";
+                string? edition = null;
+                if (name.IndexOf("_MS_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "MS";
+                else if (name.IndexOf("_DC_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "DC";
+                var baseName = $"WindowsServer-{year}";
+                return (edition is null)
+                    ? $"{baseName}-{verShort}.xml"
+                    : $"{baseName}-{edition}-{verShort}.xml";
+            }
+
+            // 20) Office (System/365/Apps) family
+            if (tokens[0].Equals("Microsoft", StringComparison.OrdinalIgnoreCase) || tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase))
+            {
+                if (tokens.Any(t => t.Equals("Office", StringComparison.OrdinalIgnoreCase)) && tokens.Any(t => t.Equals("365", StringComparison.OrdinalIgnoreCase)))
+                    return $"Office-365ProPlus-{verShort}.xml";
+
+                var systemYear = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2013|2016)$"));
+                if (tokens.Any(t => t.Equals("Office", StringComparison.OrdinalIgnoreCase)) && tokens.Any(t => t.Equals("System", StringComparison.OrdinalIgnoreCase)) && systemYear != null)
+                    return $"Office-System{systemYear}-{verShort}.xml";
+
+                string? app = null;
+                string? appYear = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2013|2016)$"));
+                if (tokens.Any(t => t.Equals("Access", StringComparison.OrdinalIgnoreCase))) app = "Access";
+                else if (tokens.Any(t => t.Equals("Excel", StringComparison.OrdinalIgnoreCase))) app = "Excel";
+                else if (tokens.Any(t => t.Equals("OneNote", StringComparison.OrdinalIgnoreCase))) app = "OneNote";
+                else if (tokens.Any(t => t.Equals("Outlook", StringComparison.OrdinalIgnoreCase))) app = "Outlook";
+                else if (tokens.Any(t => t.Equals("PowerPoint", StringComparison.OrdinalIgnoreCase))) app = "PowerPoint";
+                else if (tokens.Any(t => t.Equals("Publisher", StringComparison.OrdinalIgnoreCase))) app = "Publisher";
+                else if (tokens.Any(t => t.Equals("Skype", StringComparison.OrdinalIgnoreCase))) app = "Skype";
+                else if (tokens.Any(t => t.Equals("Visio", StringComparison.OrdinalIgnoreCase))) app = "Visio";
+                else if (tokens.Any(t => t.Equals("Word", StringComparison.OrdinalIgnoreCase))) app = "Word";
+
+                if (app != null && appYear != null)
+                    return $"Office-{app}{appYear}-{verShort}.xml";
+
+                if (tokens.Any(t => t.Equals("OfficeSystem", StringComparison.OrdinalIgnoreCase)) && appYear != null)
+                    return $"Office-System{appYear}-{verShort}.xml";
+            }
+
+            // 21) McAfee VirusScan 8.8 => McAfee-8.8-VirusScan-x.y.xml
+            if (tokens.Count >= 2 && tokens[0].Equals("McAfee", StringComparison.OrdinalIgnoreCase))
+            {
+                var versionToken = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(?:\.\d+)?$")) ?? "8.8";
+                return $"McAfee-{versionToken}-VirusScan-{verShort}.xml";
+            }
+
+            // Fallback
+            var cleaned = tokens.Where(t =>
+                !t.Equals("Site", StringComparison.OrdinalIgnoreCase) &&
+                !t.Equals("Server", StringComparison.OrdinalIgnoreCase) &&
+                !t.Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
+                !t.Equals("STIG", StringComparison.OrdinalIgnoreCase) &&
+                !t.Equals("Manual", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            var numericToken = cleaned.FirstOrDefault(t => Regex.IsMatch(t, @"^\d+(?:-\d+)?$"));
+            if (numericToken != null) cleaned.Remove(numericToken);
+            var basePascal = JoinPascal(cleaned);
+            if (string.IsNullOrWhiteSpace(basePascal)) basePascal = JoinPascal(tokens);
+
             string? normalizedNumber = null;
             if (numericToken != null)
             {
@@ -686,11 +930,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 }
             }
 
-            var parts = new System.Collections.Generic.List<string> { baseName + (siteSuffix ?? string.Empty) };
+            var parts = new System.Collections.Generic.List<string> { basePascal };
             if (!string.IsNullOrWhiteSpace(normalizedNumber)) parts.Add(normalizedNumber);
-            if (!string.IsNullOrWhiteSpace(editionToken)) parts.Add(editionToken); // Add MS/DC when present
             parts.Add(verShort);
-
             return string.Join("-", parts) + ".xml";
         }
 

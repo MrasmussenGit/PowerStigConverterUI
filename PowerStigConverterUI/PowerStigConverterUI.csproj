@@ -1,5 +1,4 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
@@ -9,10 +8,25 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Version>1.0.0.7</Version>
     <ApplicationIcon>Images\App.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Startup performance for single-file desktop apps -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <!-- Avoid single-file payload compression for faster startup (larger exe) -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <!-- Precompile with ReadyToRun (Crossgen2), improves cold start -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Tiered compilation: quick JIT for hot paths -->
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <ReadyToRunUseCrossgen2>true</ReadyToRunUseCrossgen2>
+    <!-- Optimize build -->
+    <Optimize>true</Optimize>
+    <!-- Optional: reduce debug symbols in published app -->
+    <DebugType>portable</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Management.Automation" Version="7.5.4" />
   </ItemGroup>
-
 </Project>

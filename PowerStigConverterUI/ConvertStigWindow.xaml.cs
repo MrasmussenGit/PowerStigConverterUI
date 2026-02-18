@@ -23,7 +23,7 @@ namespace PowerStigConverterUI
         private readonly System.Collections.Generic.Dictionary<string, string> _failedRuleErrors =
             new(System.StringComparer.OrdinalIgnoreCase);
 
-        private System.Collections.Generic.List<string>? _lastSuccessIds;
+        private System.Collections.Generic.List<string>? _lastSuccessIds = new();
         private System.Windows.Threading.DispatcherTimer? _busyTimer;
         private DateTime _busyStart;
 
@@ -557,11 +557,17 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         .ThenBy(id => id, StringComparer.OrdinalIgnoreCase);
 
                     AppendInfo($"Failed rule conversions ({_failedRuleIds.Count}):", System.Windows.Media.Brushes.OrangeRed, null);
+                    bool failures = false;
                     foreach (var vId in sortedFailures)
                     {
+                        failures = true;
                         _failedRuleErrors.TryGetValue(vId, out var err);
                         var msg = string.IsNullOrWhiteSpace(err) ? $"{vId} failed." : $"{vId} failed: {err}";
                         AppendInfo(msg, System.Windows.Media.Brushes.OrangeRed, null);
+                    }
+                    if(failures)
+                    {
+                        // do stuff
                     }
                 }
 
@@ -1209,40 +1215,56 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             return null;
         }
 
-        // Double-click handler on InfoRichTextBox to open rule info
+        // 3) Make sure the double-click handler compiles by calling the now-public resolver.
         private void InfoRichTextBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             var lineText = GetLineUnderMouse(InfoRichTextBox, e) ?? GetWordUnderMouse(InfoRichTextBox, e);
-            if (string.IsNullOrWhiteSpace(lineText))
-                return;
+            if (string.IsNullOrWhiteSpace(lineText)) return;
 
-            var m = Regex.Match(lineText, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase);
-            if (!m.Success)
-            {
-                m = Regex.Match(lineText, @"\b(SV-\d+|V-\d+)[^0-9]", RegexOptions.IgnoreCase);
-                if (!m.Success) return;
-            }
-            var rawId = Regex.Match(m.Value, @"\b(SV-\d+|V-\d+)\b", RegexOptions.IgnoreCase).Value;
+            var m = Regex.Match(lineText, @"\b(SV-\d+(?:[^\s]*)?|V-\d+)\b", RegexOptions.IgnoreCase);
+            if (!m.Success) return;
+            var rawToken = m.Value;
 
             var xccdfPath = XccdfPathTextBox.Text?.Trim();
-            var destination = DestinationTextBox.Text?.Trim();
             if (string.IsNullOrWhiteSpace(xccdfPath) || !File.Exists(xccdfPath))
             {
                 System.Windows.MessageBox.Show("XCCDF path is not set or invalid.", "Rule Info", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            // SV rules: only use the original XCCDF; do not pass converted folder
-            var isSv = rawId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase);
-            var info = RuleInfoExtractor.TryExtractRuleInfo(rawId, xccdfPath!, isSv ? null : destination);
-
-            if (isSv)
+            string resolvedForQuery = rawToken;
+            if (rawToken.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
             {
-                // Normalize and ensure SV metadata is present; avoid converted artifacts
-                info.SvId ??= Regex.Match(rawId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
-                info.ConvertedFile = null;
-                info.ConvertedSnippet = null;
+                var vId = RuleInfoExtractor.ResolveVIdForSv(rawToken, xccdfPath);
+                if (!string.IsNullOrWhiteSpace(vId))
+                    resolvedForQuery = vId;
+                else
+                {
+                    var d = Regex.Match(rawToken, @"SV-(\d+)", RegexOptions.IgnoreCase);
+                    if (d.Success) resolvedForQuery = $"V-{d.Groups[1].Value}";
+                }
             }
+
+            var info = RuleInfoExtractor.TryExtractRuleInfo(resolvedForQuery, xccdfPath!, convertedFolder: null);
+
+            bool hasAny =
+                !string.IsNullOrWhiteSpace(info.Title) ||
+                !string.IsNullOrWhiteSpace(info.Severity) ||
+                !string.IsNullOrWhiteSpace(info.Description) ||
+                !string.IsNullOrWhiteSpace(info.FixText) ||
+                !string.IsNullOrWhiteSpace(info.ReferencesXml);
+
+            if (!hasAny)
+            {
+                info.RuleId = resolvedForQuery;
+                info.Description = "No data found in XCCDF for the selected rule. This can happen if:\n" +
+                                   "- The clicked line contains a non-rule identifier.\n" +
+                                   "- The XCCDF uses only SV identifiers and the owning V-id could not be resolved.\n" +
+                                   "- Namespaces or schema variations differ in this benchmark.";
+            }
+
+            if (rawToken.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
+                info.SvId ??= Regex.Match(rawToken, @"SV-\d+", RegexOptions.IgnoreCase).Value;
 
             var win = new RuleInfoWindow { Owner = this };
             win.SetRuleInfo(info);
@@ -1319,14 +1341,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
     internal static class RuleInfoExtractor
     {
-        // Map an SV- ident to its owning Rule's V- id (if any)
-        // Map an SV- ident to its owning Rule's V- id (if any)
-        private static string? ResolveVIdForSv(string svId, string xccdfPath)
+        public static string? ResolveVIdForSv(string svId, string xccdfPath)
         {
             if (string.IsNullOrWhiteSpace(svId) || !svId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
                 return null;
 
-            // Normalize to base "SV-<digits>" to handle inputs like "SV-225223r961038_rule"
             var baseSv = Regex.Match(svId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
             if (string.IsNullOrWhiteSpace(baseSv)) return null;
 
@@ -1387,48 +1406,60 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             return info;
         }
 
+        // Strengthen XCCDF lookup: load the whole document and use robust XPath fallbacks.
+        // This fixes cases like V-218819 in IIS Server XCCDFs where Rule/@id is SV-... and ident carries SV digits.
         private static void TryFillFromXccdf(string ruleId, string xccdfPath, RuleInfo info)
         {
             try
             {
+                // Build base tokens
+                var vMatch = Regex.Match(ruleId, @"^V-(\d+)", RegexOptions.IgnoreCase);
+                var svMatch = Regex.Match(ruleId, @"^SV-(\d+)", RegexOptions.IgnoreCase);
+                var baseDigits = vMatch.Success ? vMatch.Groups[1].Value : svMatch.Success ? svMatch.Groups[1].Value : string.Empty;
+                var baseV = string.IsNullOrEmpty(baseDigits) ? string.Empty : $"V-{baseDigits}";
+                var baseSv = string.IsNullOrEmpty(baseDigits) ? string.Empty : $"SV-{baseDigits}";
+
+                // Load whole XCCDF to avoid streaming edge cases
                 var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
                 var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore };
-                using var reader = System.Xml.XmlReader.Create(xccdfPath, settings);
-                doc.Load(reader);
+                using (var reader = System.Xml.XmlReader.Create(xccdfPath, settings))
+                    doc.Load(reader);
 
                 System.Xml.XmlNode? ruleNode = null;
 
-                if (ruleId.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                // 1) Direct V-id attribute (rare in DISA, but quick win)
+                if (!string.IsNullOrWhiteSpace(baseV))
+                    ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{baseV}']");
+
+                // 2) DISA style: Rule/@id is SV-... and the ident contains our base SV digits
+                if (ruleNode is null && !string.IsNullOrWhiteSpace(baseSv))
                 {
-                    ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{ruleId}']");
-                }
-                else if (ruleId.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
-                {
-                    var baseSv = Regex.Match(ruleId, @"SV-\d+", RegexOptions.IgnoreCase).Value;
                     ruleNode = doc.SelectSingleNode(
                         $"//*[local-name()='Rule'][.//*[local-name()='ident' and (starts-with(normalize-space(text()),'{baseSv}') or contains(@system,'{baseSv}'))]]");
+                }
 
-                    // If found via SV ident, keep SvId and set RuleId to owning V- id if available
-                    if (ruleNode is not null)
-                    {
-                        info.SvId ??= baseSv;
-                        var vIdAttr = ruleNode.Attributes?["id"]?.Value?.Trim();
-                        if (!string.IsNullOrWhiteSpace(vIdAttr)) info.RuleId = vIdAttr;
-                    }
-                    else
-                    {
-                        // Try resolving to V- to fetch the rule node
-                        var vId = ResolveVIdForSv(ruleId, xccdfPath);
-                        if (!string.IsNullOrWhiteSpace(vId))
-                            ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{vId}']");
-                    }
+                // 3) Fallback: match Rules where any ident contains base V or base SV anywhere (not just starts-with)
+                if (ruleNode is null && !string.IsNullOrWhiteSpace(baseDigits))
+                {
+                    ruleNode = doc.SelectSingleNode(
+                        $"//*[local-name()='Rule'][.//*[local-name()='ident' and (contains(normalize-space(text()),'SV-{baseDigits}') or contains(normalize-space(text()),'V-{baseDigits}') or contains(@system,'SV-{baseDigits}'))]]");
+                }
+
+                // 4) Last resort: any Rule whose @id contains our digits (handles SV-xxxxx_rNNN_rule patterns)
+                if (ruleNode is null && !string.IsNullOrWhiteSpace(baseDigits))
+                {
+                    ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and contains(@id,'{baseDigits}')]");
                 }
 
                 if (ruleNode is null)
                     return;
 
-                var vIdAttr2 = ruleNode.Attributes?["id"]?.Value?.Trim();
-                if (!string.IsNullOrWhiteSpace(vIdAttr2)) info.RuleId = vIdAttr2;
+                // Populate info from the matched Rule
+                var vIdAttr = ruleNode.Attributes?["id"]?.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(vIdAttr) && vIdAttr.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                    info.RuleId = vIdAttr;
+                else if (!string.IsNullOrWhiteSpace(baseV))
+                    info.RuleId = baseV;
 
                 var severityAttr = ruleNode.Attributes?["severity"]?.Value;
                 if (!string.IsNullOrWhiteSpace(severityAttr)) info.Severity = severityAttr;
@@ -1440,25 +1471,28 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 if (descNodes is not null && descNodes.Count > 0)
                 {
                     var sb = new StringBuilder();
-                    foreach (System.Xml.XmlNode dn in descNodes)
-                        sb.AppendLine(dn.InnerText.Trim());
+                    foreach (System.Xml.XmlNode dn in descNodes) sb.AppendLine(dn.InnerText.Trim());
                     info.Description = sb.ToString().Trim();
                 }
 
                 var fixNode = ruleNode.SelectSingleNode(".//*[local-name()='fixtext']");
                 if (fixNode is not null) info.FixText = fixNode.InnerText.Trim();
 
+                // Capture SV id for display
                 var identNode = ruleNode.SelectSingleNode(".//*[local-name()='ident' and (starts-with(normalize-space(text()),'SV-') or contains(@system,'SV-'))]");
                 if (identNode is not null)
                 {
                     var identText = identNode.InnerText?.Trim();
                     var systemAttr = identNode.Attributes?["system"]?.Value;
-                    if (!string.IsNullOrWhiteSpace(identText) && identText.StartsWith("SV-", StringComparison.OrdinalIgnoreCase))
-                        info.SvId ??= identText;
-                    else if (!string.IsNullOrWhiteSpace(systemAttr))
+                    if (!string.IsNullOrWhiteSpace(identText))
                     {
-                        var m2 = Regex.Match(systemAttr, @"SV-\d+", RegexOptions.IgnoreCase);
-                        if (m2.Success) info.SvId ??= m2.Value;
+                        var m2 = Regex.Match(identText, @"SV-\d+", RegexOptions.IgnoreCase);
+                        if (m2.Success) info.SvId = m2.Value;
+                    }
+                    if (string.IsNullOrWhiteSpace(info.SvId) && !string.IsNullOrWhiteSpace(systemAttr))
+                    {
+                        var m3 = Regex.Match(systemAttr, @"SV-\d+", RegexOptions.IgnoreCase);
+                        if (m3.Success) info.SvId = m3.Value;
                     }
                 }
 
@@ -1466,8 +1500,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 if (refNodes is not null && refNodes.Count > 0)
                 {
                     var sb = new StringBuilder();
-                    foreach (System.Xml.XmlNode rn in refNodes)
-                        sb.AppendLine(rn.OuterXml);
+                    foreach (System.Xml.XmlNode rn in refNodes) sb.AppendLine(rn.OuterXml);
                     info.ReferencesXml = sb.ToString().Trim();
                 }
             }
@@ -1476,7 +1509,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // ignore parse errors
             }
         }
-
+        // 2) Fix CS8604: guard against null when passing XmlNode to GetNodeSummary.
         private static void TryFillFromConverted(string ruleId, string folder, RuleInfo info)
         {
             try
@@ -1490,9 +1523,13 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     var candidates = doc.SelectNodes($"//*[@id='{ruleId}']");
                     if (candidates is not null && candidates.Count > 0)
                     {
-                        info.ConvertedFile = file;
-                        info.ConvertedSnippet = GetNodeSummary(candidates[0]);
-                        return;
+                        var first = candidates[0];
+                        if (first is not null)
+                        {
+                            info.ConvertedFile = file;
+                            info.ConvertedSnippet = GetNodeSummary(first);
+                            return;
+                        }
                     }
 
                     var node = doc.SelectSingleNode(

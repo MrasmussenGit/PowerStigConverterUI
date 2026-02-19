@@ -1215,7 +1215,6 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             return null;
         }
 
-        // 3) Make sure the double-click handler compiles by calling the now-public resolver.
         private void InfoRichTextBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             var lineText = GetLineUnderMouse(InfoRichTextBox, e) ?? GetWordUnderMouse(InfoRichTextBox, e);
@@ -1226,6 +1225,8 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             var rawToken = m.Value;
 
             var xccdfPath = XccdfPathTextBox.Text?.Trim();
+            var destination = DestinationTextBox.Text?.Trim();
+
             if (string.IsNullOrWhiteSpace(xccdfPath) || !File.Exists(xccdfPath))
             {
                 System.Windows.MessageBox.Show("XCCDF path is not set or invalid.", "Rule Info", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1245,7 +1246,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 }
             }
 
-            var info = RuleInfoExtractor.TryExtractRuleInfo(resolvedForQuery, xccdfPath!, convertedFolder: null);
+            // Pass destination folder so converted snippet can be loaded for successful conversions
+            var convertedFolder = !string.IsNullOrWhiteSpace(destination) && Directory.Exists(destination) ? destination : null;
+            var info = RuleInfoExtractor.TryExtractRuleInfo(resolvedForQuery, xccdfPath!, convertedFolder);
 
             bool hasAny =
                 !string.IsNullOrWhiteSpace(info.Title) ||

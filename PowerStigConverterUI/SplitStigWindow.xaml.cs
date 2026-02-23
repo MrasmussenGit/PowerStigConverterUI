@@ -166,6 +166,20 @@ namespace PowerStigConverterUI
                     }
                 }
 
+                // Load source XML once
+                var xmlDoc = new System.Xml.XmlDocument();
+                xmlDoc.Load(src);
+
+                // Configure XML writer settings for proper formatting
+                var writerSettings = new System.Xml.XmlWriterSettings
+                {
+                    Indent = true,
+                    IndentChars = "  ", // 2 spaces
+                    NewLineChars = Environment.NewLine,
+                    NewLineHandling = System.Xml.NewLineHandling.Replace,
+                    Encoding = new System.Text.UTF8Encoding(false) // UTF-8 without BOM
+                };
+
                 // Header per run with timestamp
                 OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started{Environment.NewLine}");
                 OutputTextBox.AppendText($"Source: {src}{Environment.NewLine}");
@@ -173,7 +187,10 @@ namespace PowerStigConverterUI
 
                 if (!string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    File.Copy(src, msPath, overwrite);
+                    using (var writer = System.Xml.XmlWriter.Create(msPath, writerSettings))
+                    {
+                        xmlDoc.Save(writer);
+                    }
                     OutputTextBox.AppendText($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}");
                 }
                 else
@@ -183,7 +200,10 @@ namespace PowerStigConverterUI
 
                 if (!string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    File.Copy(src, dcPath, overwrite);
+                    using (var writer = System.Xml.XmlWriter.Create(dcPath, writerSettings))
+                    {
+                        xmlDoc.Save(writer);
+                    }
                     OutputTextBox.AppendText($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}");
                 }
                 else

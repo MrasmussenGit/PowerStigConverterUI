@@ -26,7 +26,8 @@ namespace PowerStigConverterUI
         private System.Collections.Generic.List<string>? _lastSuccessIds = new();
         private System.Windows.Threading.DispatcherTimer? _busyTimer;
         private DateTime _busyStart;
-
+        private readonly System.Collections.Generic.HashSet<string> _skippedRuleIds =
+    new(System.StringComparer.OrdinalIgnoreCase);
         public ConvertStigWindow()
         {
             InitializeComponent();
@@ -354,16 +355,163 @@ namespace PowerStigConverterUI
             // AppendInfo($"Still working… {elapsed:mm\\:ss}", System.Windows.Media.Brushes.DarkSlateGray, null);
         }
 
+        private static (System.Collections.Generic.HashSet<string> Skips, System.Collections.Generic.HashSet<string> HardCoded) ParseLogFile(string logPath)
+        {
+            var skips = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var hardCoded = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!File.Exists(logPath))
+                return (skips, hardCoded);
+
+            try
+            {
+                foreach (var line in File.ReadLines(logPath))
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    var parts = line.Split(new[] { "::" }, StringSplitOptions.None);
+                    if (parts.Length < 3 || !parts[0].StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var ruleId = parts[0].Trim();
+                    var field2 = parts[1].Trim();
+                    var field3 = parts[2].Trim();
+
+                    // SKIP: exact format V-XXXXX::*::.
+                    if (field2 == "*" && field3 == ".")
+                    {
+                        skips.Add(ruleId);
+                    }
+                    else
+                    {
+                        // Everything else is a Hard Coded rule (manual override)
+                        // This includes:
+                        // - V-XXXXX::*::HardCodedRule(...)
+                        // - V-XXXXX::custom text::custom text
+                        hardCoded.Add(ruleId);
+                    }
+                }
+            }
+            catch { /* ignore parse errors */ }
+
+            return (skips, hardCoded);
+        }
+
+        // Update ParseExistingLogEntries to only return SKIPs (for duplicate detection when writing)
+        private static System.Collections.Generic.HashSet<string> ParseExistingLogEntries(string logPath)
+        {
+            var (skips, _) = ParseLogFile(logPath);
+            return skips;
+        }
+
+        // Append failed rules as SKIP entries: V-XXXXX::*::.
+        private static string? DeriveLogFilePathFromXccdf(string? xccdfPath)
+        {
+            if (string.IsNullOrWhiteSpace(xccdfPath)) return null;
+
+            var directory = Path.GetDirectoryName(xccdfPath);
+            var fileNameNoExt = Path.GetFileNameWithoutExtension(xccdfPath); // U_MS_IIS_8-5_Server_STIG_V2R4_Manual-xccdf
+
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileNameNoExt))
+                return null;
+
+            // Result: U_MS_IIS_8-5_Server_STIG_V2R4_Manual-xccdf.log in the same directory
+            return Path.Combine(directory, fileNameNoExt + ".log");
+        }
+        private static void AppendFailedRulesToLog(string logPath, System.Collections.Generic.IEnumerable<string> failedRuleIds)
+        {
+            try
+            {
+                // Load existing entries to avoid duplicates
+                var existingRules = ParseExistingLogEntries(logPath);
+
+                var newEntries = failedRuleIds
+                    .Where(ruleId => !existingRules.Contains(ruleId))
+                    .OrderBy(id => ExtractNumericKey(id, "V-"))
+                    .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .Select(ruleId => $"{ruleId}::*::.")
+                    .ToList();
+
+                if (newEntries.Count == 0) return;
+
+                // Ensure directory exists
+                var directory = Path.GetDirectoryName(logPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                // Append new SKIP entries
+                File.AppendAllLines(logPath, newEntries, new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to write to log file '{logPath}': {ex.Message}", ex);
+            }
+        }
+
+        private static System.Collections.Generic.HashSet<string> ExtractRulesWithNoDscResource(string convertedXmlPath)
+        {
+            var ids = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(convertedXmlPath);
+
+                // Find all Rule elements with dscresource="None"
+                var noDscNodes = doc.SelectNodes("//*[local-name()='Rule' and @dscresource='None']");
+                if (noDscNodes is not null)
+                {
+                    foreach (System.Xml.XmlNode n in noDscNodes)
+                    {
+                        var id = n.Attributes?["id"]?.Value;
+                        if (!string.IsNullOrWhiteSpace(id) && id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Normalize to base ID (V-123456.a → V-123456)
+                            var normalized = NormalizeVId(id.Trim());
+                            if (!string.IsNullOrWhiteSpace(normalized))
+                                ids.Add(normalized);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore parse errors
+            }
+            return ids;
+        }
         private async void ConvertButton_Click(object sender, RoutedEventArgs e)
         {
             InfoRichTextBox.Document.Blocks.Clear();
             _failedRuleIds.Clear();
             _failedRuleErrors.Clear();
+            _skippedRuleIds.Clear();
 
             var modulePath = ModulePathTextBox.Text?.Trim();
             var xccdfPath = XccdfPathTextBox.Text?.Trim();
             var destination = DestinationTextBox.Text?.Trim();
             var createOrgSettings = CreateOrgSettingsCheckBox.IsChecked == true;
+            var addFailedRulesToLog = AddFailedRulesToLogCheckBox.IsChecked == true;
+
+            // Read existing skips and hard coded rules from log file BEFORE conversion starts
+            var logPath = DeriveLogFilePathFromXccdf(xccdfPath);
+            System.Collections.Generic.HashSet<string> hardCodedRuleIds = new(StringComparer.OrdinalIgnoreCase);
+            bool logFileExistedBefore = !string.IsNullOrWhiteSpace(logPath) && File.Exists(logPath);
+            string logFileStatus = "not applicable";
+
+            if (logFileExistedBefore)
+            {
+                var (skips, hardCoded) = ParseLogFile(logPath!);
+                foreach (var skip in skips)
+                    _skippedRuleIds.Add(skip);
+                foreach (var hc in hardCoded)
+                    hardCodedRuleIds.Add(hc);
+
+                if (_skippedRuleIds.Count > 0 || hardCodedRuleIds.Count > 0)
+                {
+                    AppendInfo($"Loaded from log file: {_skippedRuleIds.Count} SKIP rule(s), {hardCodedRuleIds.Count} Hard Coded rule(s). Path: {logPath}",
+                        System.Windows.Media.Brushes.DarkOrange, null);
+                }
+            }
 
             if (string.IsNullOrWhiteSpace(modulePath) || !File.Exists(modulePath))
             {
@@ -389,15 +537,16 @@ namespace PowerStigConverterUI
                 AppendInfo($"Failed to ensure destination folder: {ex.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
                 return;
             }
-
-            ConvertButton.IsEnabled = false;
+            if (!logFileExistedBefore)
+            {
+                AppendInfo("No log file loaded, log file missing from the xccdf file location.", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+            }
             SetBusy(true, "Converting…");
             AppendInfo("Starting conversion with Windows PowerShell 5.x...", System.Windows.Media.Brushes.DarkGreen, null);
 
             try
             {
-                // Setup ProcessStartInfo for PowerShell execution
-                var moduleRoot = Path.GetDirectoryName(modulePath)!; // if psm1 is under module root
+                var moduleRoot = Path.GetDirectoryName(modulePath)!;
                 var tempScript = Path.Combine(Path.GetTempPath(), $"PowerStigConvert_{Guid.NewGuid():N}.ps1");
                 var scriptContent = @"
 param(
@@ -411,12 +560,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 ";
                 File.WriteAllText(tempScript, scriptContent, new UTF8Encoding(false));
 
-                // Build arguments for -File without brittle quoting
                 var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" \"{modulePath}\" \"{xccdfPath}\" \"{destination}\" \"Windows\"";
 
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe", // Windows PowerShell 5.x
+                    FileName = "powershell.exe",
                     Arguments = psArgs,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -424,8 +572,6 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     CreateNoWindow = true,
                     WorkingDirectory = moduleRoot
                 };
-
-                string stdOut = string.Empty, stdErr = string.Empty;
 
                 await System.Threading.Tasks.Task.Run(() =>
                 {
@@ -445,13 +591,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                             if (!string.IsNullOrWhiteSpace(rid))
                             {
                                 _failedRuleIds.Add(rid!);
-                                // Store detailed error text per rule
-                                // compact format: "Rule V-XXXXX failed: <errorText>"
                                 var sepIdx = compact.IndexOf(" failed:", StringComparison.OrdinalIgnoreCase);
                                 string error = sepIdx >= 0 ? compact.Substring(sepIdx + " failed:".Length).Trim() : compact;
                                 _failedRuleErrors[rid!] = error;
                             }
-                            // No immediate UI output; we print a grouped summary after conversion
                             return;
                         }
 
@@ -476,8 +619,8 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     proc.BeginErrorReadLine();
                     proc.WaitForExit();
 
-                    stdOut = outSb.ToString();
-                    stdErr = errSb.ToString();
+                    var stdOut = outSb.ToString();
+                    var stdErr = errSb.ToString();
 
                     try { File.Delete(tempScript); } catch { /* ignore */ }
 
@@ -485,11 +628,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         throw new InvalidOperationException($"Windows PowerShell exited with code {proc.ExitCode}. First error:\n{stdErr.Trim()}");
                 });
 
-                // Resolve actual output, then rename to ensure edition (MS/DC) is preserved in filename
-                string? expectedFileName = GetConvertedFileName(xccdfPath!); // includes edition when present
+                string? expectedFileName = GetConvertedFileName(xccdfPath!);
                 string resolvedPath = ResolveConvertedFullPath(destination!, expectedFileName!);
 
-                // If the module emitted a file without the edition token, rename it to the expected edition form
                 if (!string.IsNullOrWhiteSpace(expectedFileName))
                 {
                     var hasEditionToken = Regex.IsMatch(expectedFileName, @"-(MS|DC)-", RegexOptions.IgnoreCase);
@@ -509,13 +650,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         }
                     }
 
-                    // Also ensure the .org.default.xml preserves the edition token
                     if (createOrgSettings && hasEditionToken)
                     {
                         var expectedOrgFileName = Path.GetFileNameWithoutExtension(expectedFileName) + ".org.default.xml";
                         var expectedOrgPath = Path.Combine(destination!, expectedOrgFileName);
 
-                        // Resolve whatever name the module produced and rename if needed
                         var resolvedOrgPath = ResolveConvertedFullPath(destination!, expectedOrgFileName);
                         if (!string.Equals(resolvedOrgPath, expectedOrgPath, StringComparison.OrdinalIgnoreCase))
                         {
@@ -541,52 +680,167 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                 var convertedFilePath = resolvedPath;
 
-                // Collect converted V- IDs to emit success/failure messages
+                // Collect all IDs from converted output
                 var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var id in ExtractRuleIdsFromConverted(convertedFilePath))
                     convertedIds.Add(id);
 
-                // Emit failures sorted by numeric portion of V- IDs
-                if (_failedRuleIds.Count > 0)
-                {
-                    var sortedFailures = _failedRuleIds
-                        .Select(id => id.Trim())
-                        .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
-                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase);
+                // Extract rules with dscresource="None" (won't be applied)
+                var noDscResourceIds = ExtractRulesWithNoDscResource(convertedFilePath);
 
-                    AppendInfo($"Failed rule conversions ({_failedRuleIds.Count}):", System.Windows.Media.Brushes.OrangeRed, null);
-                    bool failures = false;
-                    foreach (var vId in sortedFailures)
-                    {
-                        failures = true;
-                        _failedRuleErrors.TryGetValue(vId, out var err);
-                        var msg = string.IsNullOrWhiteSpace(err) ? $"{vId} failed." : $"{vId} failed: {err}";
-                        AppendInfo(msg, System.Windows.Media.Brushes.OrangeRed, null);
-                    }
-                    if(failures)
-                    {
-                        // do stuff
-                    }
+                // Normalize failed IDs
+                var normalizedFailedIds = new System.Collections.Generic.HashSet<string>(
+                    _failedRuleIds.Select(id => NormalizeVId(id.Trim())).Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                // Normalize converted IDs to base form (V-123456.a → V-123456) and track variants
+                var normalizedConvertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var convertedIdsByBase = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var id in convertedIds)
+                {
+                    var normalized = NormalizeVId(id.Trim());
+                    if (string.IsNullOrWhiteSpace(normalized) || !normalized.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    normalizedConvertedIds.Add(normalized);
+
+                    // Track variants for display
+                    if (!convertedIdsByBase.ContainsKey(normalized))
+                        convertedIdsByBase[normalized] = new System.Collections.Generic.List<string>();
+                    convertedIdsByBase[normalized].Add(id);
                 }
 
-                // Always show successful conversions, regardless of Skip Compare
-                var successIds = convertedIds
-                    .Where(id => !_failedRuleIds.Contains(id))
-                    .Select(id => id.Trim())
-                    .Where(id => id.StartsWith("V-", StringComparison.OrdinalIgnoreCase))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                // Calculate true successes: exclude failed, skipped, hard coded, AND no DSC resource rules
+                var successIds = normalizedConvertedIds
+                    .Where(id => !normalizedFailedIds.Contains(id))
+                    .Where(id => !_skippedRuleIds.Contains(id))
+                    .Where(id => !hardCodedRuleIds.Contains(id))
+                    .Where(id => !noDscResourceIds.Contains(id))
                     .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
                     .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
+                // ===== DISPLAY RESULTS IN ORDER =====
+
+                // 1. FAILED CONVERSIONS (new failures from THIS conversion) - SHOW FIRST
+                bool logFileWasWritten = false;
+                if (normalizedFailedIds.Count > 0)
+                {
+                    var sortedFailures = normalizedFailedIds
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    AppendInfo($"Failed rule conversions ({sortedFailures.Count}):", System.Windows.Media.Brushes.OrangeRed, null);
+                    foreach (var vId in sortedFailures)
+                    {
+                        _failedRuleErrors.TryGetValue(vId, out var err);
+                        var msg = string.IsNullOrWhiteSpace(err) ? $"{vId} failed." : $"{vId} failed: {err}";
+                        AppendInfo(msg, System.Windows.Media.Brushes.OrangeRed, null);
+                    }
+
+                    // Write NEW failed rules to log file as SKIP entries
+                    if (addFailedRulesToLog && !string.IsNullOrWhiteSpace(logPath))
+                    {
+                        try
+                        {
+                            AppendFailedRulesToLog(logPath, sortedFailures);
+                            logFileWasWritten = true;
+                            AppendInfo($"Added {sortedFailures.Count} failed rule(s) as SKIPs to log file: {logPath}",
+                                System.Windows.Media.Brushes.DarkOrange, null);
+
+                            // Show message box if log file was just created (didn't exist before)
+                            if (!logFileExistedBefore)
+                            {
+                                System.Windows.MessageBox.Show(
+                                    "Errors during conversion, a log file was created. Run convert again to get a clean conversion.",
+                                    "Log File Created",
+                                    MessageBoxButton.OK,
+                                    MessageBoxImage.Information);
+                            }
+                        }
+                        catch (Exception logEx)
+                        {
+                            AppendInfo($"Warning: Could not write to log file: {logEx.Message}",
+                                System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                        }
+                    }
+                }
+
+                // 2. SKIPPED RULES from log file (::*::.)
+                if (_skippedRuleIds.Count > 0)
+                {
+                    var sortedSkips = _skippedRuleIds
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    AppendInfo($"Skipped rules from log file ({sortedSkips.Count}):", System.Windows.Media.Brushes.DarkOrange, null);
+                    foreach (var vId in sortedSkips)
+                    {
+                        AppendInfo($" - {vId} (skipped)", System.Windows.Media.Brushes.DarkOrange, null);
+                    }
+                }
+
+                // 3. HARD CODED RULES from log file (all non-skip entries)
+                if (hardCodedRuleIds.Count > 0)
+                {
+                    var sortedHardCoded = hardCodedRuleIds
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    AppendInfo($"Hard Coded rules from log file ({sortedHardCoded.Count}):", System.Windows.Media.Brushes.DarkCyan, null);
+                    foreach (var vId in sortedHardCoded)
+                    {
+                        AppendInfo($" - {vId} (hard coded)", System.Windows.Media.Brushes.DarkCyan, null);
+                    }
+                }
+
+                // 4. NO DSC RESOURCE rules (converted but won't be applied)
+                if (noDscResourceIds.Count > 0)
+                {
+                    var sortedNoDsc = noDscResourceIds
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    AppendInfo($"Rules with no DSC resource - will not be applied ({sortedNoDsc.Count}):", System.Windows.Media.Brushes.DarkMagenta, null);
+                    foreach (var vId in sortedNoDsc)
+                    {
+                        AppendInfo($" - {vId} (dscresource=\"None\")", System.Windows.Media.Brushes.DarkMagenta, null);
+                    }
+                }
+
+                // Determine log file status
+                if (!string.IsNullOrWhiteSpace(logPath))
+                {
+                    if (!logFileExistedBefore && logFileWasWritten)
+                        logFileStatus = "created";
+                    else if (logFileExistedBefore && logFileWasWritten)
+                        logFileStatus = "updated";
+                    else if (logFileExistedBefore && !logFileWasWritten)
+                        logFileStatus = "unchanged";
+                }
+
+                // 5. SUCCESSFUL CONVERSIONS with variant info
                 if (successIds.Count > 0)
                 {
                     AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
-                    foreach (var id in successIds)
+                    foreach (var baseId in successIds)
                     {
-                        AppendInfo($" - {id}", System.Windows.Media.Brushes.DarkGreen, null);
+                        var variants = convertedIdsByBase.ContainsKey(baseId) ? convertedIdsByBase[baseId] : new System.Collections.Generic.List<string> { baseId };
+                        if (variants.Count > 1)
+                        {
+                            // Show base ID with variant count
+                            var variantList = string.Join(", ", variants.OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
+                            AppendInfo($" - {baseId} ({variants.Count} variants: {variantList})", System.Windows.Media.Brushes.DarkGreen, null);
+                        }
+                        else
+                        {
+                            AppendInfo($" - {baseId}", System.Windows.Media.Brushes.DarkGreen, null);
+                        }
                     }
                 }
                 else
@@ -594,12 +848,51 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
                 }
 
-                // Only perform "missing" comparison when Skip Compare is unchecked
+                // 6. SUMMARY SECTION
+                var totalVariants = convertedIds.Count;
+
+                // Manual intervention needed: skipped + no DSC resource + failed
+                var totalManual = _skippedRuleIds.Count + noDscResourceIds.Count + normalizedFailedIds.Count;
+
+                // Rules that will actually be applied to endpoints (exclude manual intervention rules)
+                var totalApplied = totalVariants - totalManual;
+
+                AppendInfo($"Total: {successIds.Count} successful rule conversions created {totalVariants} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} rules set to DSCResource=\"None\", which means they won't be applied to the endpoint.",
+                    System.Windows.Media.Brushes.DarkBlue, null);
+
+                AppendInfo($"Summary:", System.Windows.Media.Brushes.DarkBlue, null);
+                AppendInfo($"\t{totalApplied} rules created that will be applied to the endpoint", System.Windows.Media.Brushes.DarkGreen, null);
+
+                // Show failed rules separately if any exist
+                if (normalizedFailedIds.Count > 0)
+                {
+                    var failedText = normalizedFailedIds.Count == 1
+                        ? "1 rule failed, you will need to handle this manually"
+                        : $"{normalizedFailedIds.Count} rules failed, you will need to handle these manually";
+                    AppendInfo($"\t{failedText}", System.Windows.Media.Brushes.OrangeRed, null);
+                }
+
+                AppendInfo($"\t{totalManual} rules that need to be handled manually", System.Windows.Media.Brushes.OrangeRed, null);
+
+                if (!string.IsNullOrWhiteSpace(logPath))
+                {
+                    // Choose color based on log file status
+                    var logColor = logFileStatus switch
+                    {
+                        "created" => System.Windows.Media.Brushes.LimeGreen,
+                        "updated" => System.Windows.Media.Brushes.DodgerBlue,
+                        "unchanged" => System.Windows.Media.Brushes.Goldenrod,
+                        _ => System.Windows.Media.Brushes.Gray
+                    };
+
+                    AppendInfo($"\tLog file status: {logFileStatus} ({logPath})", logColor, null);
+                }
+
+                // 7. COMPARE STEP (optional)
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
-                    // Show compare notice and the resolved converted file path
-                    AppendInfo($"Comparing converted output against XCCDF (this may take a moment)…{Environment.NewLine}Converted file: {convertedFilePath}",
+                    AppendInfo($"Comparing newly converted output against the original XCCDF for missing rules during conversion (this may take a moment)…{Environment.NewLine}Converted file: {convertedFilePath}",
                         System.Windows.Media.Brushes.DarkSlateBlue, null);
 
                     var missing = CompareRuleIds(xccdfPath!, convertedFilePath);

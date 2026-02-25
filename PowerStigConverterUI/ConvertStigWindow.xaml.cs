@@ -851,28 +851,33 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // 6. SUMMARY SECTION
                 var totalVariants = convertedIds.Count;
 
-                // Manual intervention needed: skipped + no DSC resource + failed
-                var totalManual = _skippedRuleIds.Count + noDscResourceIds.Count + normalizedFailedIds.Count;
+                // Manual intervention needed: skipped + no DSC resource + hard coded (NOT failed - those were never created)
+                var manualHandlingRequired = _skippedRuleIds.Count + noDscResourceIds.Count + hardCodedRuleIds.Count;
 
-                // Rules that will actually be applied to endpoints (exclude manual intervention rules)
-                var totalApplied = totalVariants - totalManual;
+                // Rules that will be automatically handled (total created minus manual intervention)
+                var rulesAutoHandled = totalVariants - manualHandlingRequired;
+
+                // Total rules created (everything except failed, since failed rules were never created in the XML)
+                var totalRulesCreated = totalVariants;
 
                 AppendInfo($"Total: {successIds.Count} successful rule conversions created {totalVariants} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} rules set to DSCResource=\"None\", which means they won't be applied to the endpoint.",
                     System.Windows.Media.Brushes.DarkBlue, null);
 
                 AppendInfo($"Summary:", System.Windows.Media.Brushes.DarkBlue, null);
-                AppendInfo($"\t{totalApplied} rules created that will be applied to the endpoint", System.Windows.Media.Brushes.DarkGreen, null);
+                AppendInfo($"\t{totalRulesCreated} total rules created", System.Windows.Media.Brushes.DarkGreen, null);
+                AppendInfo($"\t{rulesAutoHandled} rules automatically handled", System.Windows.Media.Brushes.DarkGreen, null);
+                AppendInfo($"\t{manualHandlingRequired} manual handling required", System.Windows.Media.Brushes.OrangeRed, null);
 
                 // Show failed rules separately if any exist
                 if (normalizedFailedIds.Count > 0)
                 {
                     var failedText = normalizedFailedIds.Count == 1
-                        ? "1 rule failed, you will need to handle this manually"
-                        : $"{normalizedFailedIds.Count} rules failed, you will need to handle these manually";
+                        ? "1 rule failed"
+                        : $"{normalizedFailedIds.Count} rules failed";
                     AppendInfo($"\t{failedText}", System.Windows.Media.Brushes.OrangeRed, null);
                 }
 
-                AppendInfo($"\t{totalManual} rules that need to be handled manually", System.Windows.Media.Brushes.OrangeRed, null);
+                //AppendInfo($"\t{totalManual} rules that need to be handled manually", System.Windows.Media.Brushes.OrangeRed, null);
 
                 if (!string.IsNullOrWhiteSpace(logPath))
                 {
@@ -913,6 +918,129 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     {
                         AppendInfo("No missing rule IDs detected.", System.Windows.Media.Brushes.DarkGreen, null);
                     }
+                }
+
+                // ===== 8. GENERATE HTML REPORT =====
+                try
+                {
+                    // For successful rules, we want to list each VARIANT separately, not base IDs
+                    var successVariants = successIds
+                        .SelectMany(baseId => convertedIdsByBase.ContainsKey(baseId)
+                            ? convertedIdsByBase[baseId]
+                            : new System.Collections.Generic.List<string> { baseId })
+                        .OrderBy(id => ExtractNumericKey(NormalizeVId(id), "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    var reportData = new ConversionReportData
+                    {
+                        StigName = Path.GetFileNameWithoutExtension(xccdfPath!),
+                        Timestamp = DateTime.Now,
+                        TotalRulesCreated = totalRulesCreated,
+                        RulesAutoHandled = rulesAutoHandled,
+                        ManualHandlingRequired = manualHandlingRequired,
+                        FailedCount = normalizedFailedIds.Count,
+                        IndividualDISARulesAutomated = successIds.Count, // Number of unique base IDs
+                        LogFileStatus = logFileStatus,
+                        FailedRules = normalizedFailedIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                        SkippedRules = _skippedRuleIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                        HardCodedRules = hardCodedRuleIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                        NoDscResourceRules = noDscResourceIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                        SuccessfulRules = successVariants
+                    };
+
+                    // Populate failed rule details with error messages and XCCDF info
+                    foreach (var ruleId in normalizedFailedIds)
+                    {
+                        var ruleInfo = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, null);
+
+                        reportData.FailedRuleDetails[ruleId] = new RuleDetail
+                        {
+                            ErrorMessage = _failedRuleErrors.GetValueOrDefault(ruleId, "Unknown error"),
+                            VariantCount = 1,
+                            Variants = new System.Collections.Generic.List<string> { ruleId },
+                            SvId = ruleInfo.SvId,
+                            Title = ruleInfo.Title,
+                            Severity = ruleInfo.Severity,
+                            Description = ruleInfo.Description,
+                            FixText = ruleInfo.FixText,
+                            CheckText = null
+                        };
+                    }
+
+                    // Populate successful rule details - ONE ENTRY PER VARIANT with its specific converted snippet
+                    foreach (var variantId in successVariants)
+                    {
+                        var ruleInfo = RuleInfoExtractor.TryExtractRuleInfo(variantId, xccdfPath!, destination);
+
+                        reportData.SuccessfulRuleDetails[variantId] = new RuleDetail
+                        {
+                            VariantCount = 1, // Each variant is its own entry now
+                            Variants = new System.Collections.Generic.List<string> { variantId },
+                            SvId = ruleInfo.SvId,
+                            Title = ruleInfo.Title,
+                            Severity = ruleInfo.Severity,
+                            Description = ruleInfo.Description,
+                            FixText = ruleInfo.FixText,
+                            ConvertedSnippet = ruleInfo.ConvertedSnippet, // This will be SPECIFIC to this variant
+                            DscResource = null
+                        };
+                    }
+
+                    // Populate skipped rule details
+                    foreach (var ruleId in _skippedRuleIds)
+                    {
+                        var ruleInfo = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, null);
+                        reportData.SkippedRuleDetails[ruleId] = new RuleDetail
+                        {
+                            SvId = ruleInfo.SvId,
+                            Title = ruleInfo.Title,
+                            Severity = ruleInfo.Severity,
+                            Description = ruleInfo.Description,
+                            FixText = ruleInfo.FixText
+                        };
+                    }
+
+                    // Populate hard coded rule details
+                    foreach (var ruleId in hardCodedRuleIds)
+                    {
+                        var ruleInfo = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, destination);
+                        reportData.HardCodedRuleDetails[ruleId] = new RuleDetail
+                        {
+                            SvId = ruleInfo.SvId,
+                            Title = ruleInfo.Title,
+                            Severity = ruleInfo.Severity,
+                            Description = ruleInfo.Description,
+                            FixText = ruleInfo.FixText,
+                            ConvertedSnippet = ruleInfo.ConvertedSnippet
+                        };
+                    }
+
+                    // Populate no DSC resource rule details
+                    foreach (var ruleId in noDscResourceIds)
+                    {
+                        var ruleInfo = RuleInfoExtractor.TryExtractRuleInfo(ruleId, xccdfPath!, destination);
+                        reportData.NoDscRuleDetails[ruleId] = new RuleDetail
+                        {
+                            SvId = ruleInfo.SvId,
+                            Title = ruleInfo.Title,
+                            Severity = ruleInfo.Severity,
+                            Description = ruleInfo.Description,
+                            FixText = ruleInfo.FixText,
+                            ConvertedSnippet = ruleInfo.ConvertedSnippet
+                        };
+                    }
+
+                    // Generate and save report - same location and name as converted file, but .html extension
+                    var reportHtml = ConversionReportGenerator.GenerateHtmlReport(reportData);
+                    var reportPath = Path.ChangeExtension(convertedFilePath, ".html");
+                    ConversionReportGenerator.SaveReport(reportHtml, reportPath);
+
+                    AppendInfo($"Conversion report saved: {reportPath}", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                }
+                catch (Exception reportEx)
+                {
+                    AppendInfo($"Warning: Failed to generate report: {reportEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
                 }
 
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
@@ -1815,25 +1943,29 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     var doc = new System.Xml.XmlDocument();
                     doc.Load(file);
 
-                    // Try attributes and common element names
-                    var candidates = doc.SelectNodes($"//*[@id='{ruleId}']");
-                    if (candidates is not null && candidates.Count > 0)
-                    {
-                        var first = candidates[0];
-                        if (first is not null)
-                        {
-                            info.ConvertedFile = file;
-                            info.ConvertedSnippet = GetNodeSummary(first);
-                            return;
-                        }
-                    }
+                    // For variants (V-123456.a), search for exact match on Rule/@id
+                    var ruleNode = doc.SelectSingleNode($"//*[local-name()='Rule' and @id='{ruleId}']");
 
-                    var node = doc.SelectSingleNode(
-                        $"//*[local-name()='RuleId' or local-name()='VulnId' or local-name()='BenchmarkId'][text()='{ruleId}']");
-                    if (node is not null)
+                    if (ruleNode is not null)
                     {
                         info.ConvertedFile = file;
-                        info.ConvertedSnippet = GetNodeSummary(node);
+                        // Return the FULL Rule XML (no truncation for HTML reports)
+                        info.ConvertedSnippet = ruleNode.OuterXml;
+                        return;
+                    }
+
+                    // Fallback: search by child elements (for base IDs without variant suffix)
+                    var node = doc.SelectSingleNode(
+                        $"//*[local-name()='RuleId' or local-name()='VulnId' or local-name()='BenchmarkId'][text()='{ruleId}']");
+                    if (node is not null && node.ParentNode is not null)
+                    {
+                        info.ConvertedFile = file;
+                        // Get the parent Rule element
+                        var parentRule = node.ParentNode;
+                        while (parentRule is not null && parentRule.LocalName != "Rule")
+                            parentRule = parentRule.ParentNode;
+
+                        info.ConvertedSnippet = parentRule?.OuterXml ?? node.OuterXml;
                         return;
                     }
                 }
@@ -1844,12 +1976,6 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
         }
 
-        private static string GetNodeSummary(System.Xml.XmlNode node)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine(node.OuterXml.Length <= 4000 ? node.OuterXml : node.OuterXml.Substring(0, 4000) + "...");
-            return sb.ToString();
-        }
     }
 
 }

@@ -95,22 +95,35 @@ namespace PowerStigConverterUI
                     .FirstOrDefault(e =>
                     {
                         var attrId = (string?)e.Attribute("id") ?? (string?)e.Attribute("Id");
+
+                        // FIRST: Try exact match for variants (V-123456.a, V-123456.b, etc.)
+                        if (!string.IsNullOrWhiteSpace(attrId) &&
+                            string.Equals(attrId, _ruleId, StringComparison.OrdinalIgnoreCase))
+                            return true;
+
+                        // SECOND: Try normalized match for base IDs (V-123456)
                         var version = GetChildValue(e, "version");
                         var vulnNum = GetChildValue(e, "Vuln_Num");
                         var ruleId2 = GetChildValue(e, "Rule_ID");
                         var candidates = new[] { attrId, version, vulnNum, ruleId2 }
                                          .Where(s => !string.IsNullOrWhiteSpace(s))
                                          .Select(NormalizeId);
-                        return candidates.Any(c => string.Equals(c, _ruleId, StringComparison.OrdinalIgnoreCase));
+                        return candidates.Any(c => string.Equals(c, NormalizeId(_ruleId), StringComparison.OrdinalIgnoreCase));
                     });
 
-                // Fallback: any element with id attribute matching after normalization (helps for PowerSTIG structures)
+                // Fallback: any element with id attribute matching (exact first, then normalized)
                 rule ??= doc.Descendants()
                     .FirstOrDefault(e =>
                     {
                         var attrId = (string?)e.Attribute("id") ?? (string?)e.Attribute("Id");
-                        return !string.IsNullOrWhiteSpace(attrId) &&
-                               string.Equals(NormalizeId(attrId), _ruleId, StringComparison.OrdinalIgnoreCase);
+                        if (string.IsNullOrWhiteSpace(attrId)) return false;
+
+                        // Exact match first (for variants)
+                        if (string.Equals(attrId, _ruleId, StringComparison.OrdinalIgnoreCase))
+                            return true;
+
+                        // Normalized match second (for base IDs)
+                        return string.Equals(NormalizeId(attrId), NormalizeId(_ruleId), StringComparison.OrdinalIgnoreCase);
                     });
 
                 if (rule == null) return null;

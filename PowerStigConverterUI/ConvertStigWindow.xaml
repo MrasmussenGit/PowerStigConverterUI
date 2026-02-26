@@ -60,13 +60,23 @@
         </StackPanel>
 
         <!-- Info / Logs -->
-        <GroupBox Grid.Row="3" Header="Messages">
+        <GroupBox Grid.Row="3">
+            <GroupBox.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Messages" FontWeight="SemiBold" Margin="0,0,8,0"/>
+                    <TextBlock Text="(Double-click a rule ID to see details)" 
+                       FontStyle="Italic" 
+                       FontSize="11" 
+                       Foreground="Gray" 
+                       VerticalAlignment="Center"/>
+                </StackPanel>
+            </GroupBox.Header>
             <RichTextBox x:Name="InfoRichTextBox"
-                         Margin="8"
-                         IsReadOnly="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         PreviewMouseDoubleClick="InfoRichTextBox_PreviewMouseDoubleClick"/>
+                 Margin="8"
+                 IsReadOnly="True"
+                 VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Auto"
+                 PreviewMouseDoubleClick="InfoRichTextBox_PreviewMouseDoubleClick"/>
         </GroupBox>
 
         <!-- Bottom bar: Busy left, Actions right -->

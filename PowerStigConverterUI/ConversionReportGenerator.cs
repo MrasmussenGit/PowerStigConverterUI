@@ -7,7 +7,7 @@ using System.IO;
 
 namespace PowerStigConverterUI
 {
-    public class ConversionReportGenerator
+    public static class ConversionReportGenerator
     {
         public static string GenerateHtmlReport(ConversionReportData data)
         {
@@ -25,13 +25,23 @@ namespace PowerStigConverterUI
         
         /* Summary Cards */
         .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0; }}
-        .summary-card {{ padding: 20px; border-radius: 8px; border-left: 4px solid; }}
+        .summary-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }}
+        .summary-card {{ padding: 20px; border-radius: 8px; border-left: 4px solid; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }}
+        .summary-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
+        .summary-card[style*=""cursor: default""] {{ cursor: default !important; }}
+        .summary-card[style*=""cursor: default""]:hover {{ transform: none; box-shadow: none; }}
+        .summary-card-large {{ padding: 30px; border-radius: 8px; border-left: 6px solid; text-align: center; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }}
+        .summary-card-large:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }}
         .summary-card.success {{ background: #e7f3e7; border-left-color: #107c10; }}
         .summary-card.error {{ background: #fce8e8; border-left-color: #d13438; }}
         .summary-card.warning {{ background: #fff4e5; border-left-color: #ff8c00; }}
         .summary-card.info {{ background: #e7f3ff; border-left-color: #0078d4; }}
+        .summary-card-large.success {{ background: #e7f3e7; border-left-color: #107c10; }}
+        .summary-card-large.warning {{ background: #fff4e5; border-left-color: #ff8c00; }}
         .summary-card-number {{ font-size: 2em; font-weight: bold; margin-bottom: 5px; }}
+        .summary-card-large .summary-card-number {{ font-size: 3em; }}
         .summary-card-label {{ font-size: 0.9em; color: #666; }}
+        .summary-card-large .summary-card-label {{ font-size: 1.1em; font-weight: 600; }}
         
         /* Collapsible Sections */
         .section {{ margin: 25px 0; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }}
@@ -120,6 +130,30 @@ namespace PowerStigConverterUI
             button.classList.add('active');
             document.getElementById(tabId).classList.add('active');
         }}
+        
+        function jumpToSection(sectionId) {{
+            const section = document.getElementById(sectionId);
+            if (!section) return;
+            
+            const header = section.previousElementSibling;
+            if (!header) return;
+            
+            // Check if section is already expanded
+            const isExpanded = header.classList.contains('active');
+            
+            if (isExpanded) {{
+                // Collapse if already expanded
+                header.classList.remove('active');
+                section.classList.remove('active');
+            }} else {{
+                // Expand and scroll to it
+                header.classList.add('active');
+                section.classList.add('active');
+                
+                // Smooth scroll to the section
+                header.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+            }}
+        }}
     </script>
 </head>
 <body>
@@ -128,25 +162,40 @@ namespace PowerStigConverterUI
         <p class=""timestamp"">Generated: {data.Timestamp:yyyy-MM-dd HH:mm:ss}</p>
         
         <div class=""summary"">
-            <div class=""summary-card success"">
-                <div class=""summary-card-number"">{data.IndividualDISARulesAutomated}</div>
-                <div class=""summary-card-label"">Individual DISA Rules Automated</div>
+            <div class=""summary-card success"" onclick=""jumpToSection('success-section')"">
+                <div class=""summary-card-number"">{data.SuccessfulRules.Count}</div>
+                <div class=""summary-card-label"">Automated Rules (Including Variants)</div>
             </div>
-            <div class=""summary-card info"">
+            <!-- Non-clickable stat display -->
+            <div class=""summary-card info"" style=""cursor: default; opacity: 0.9;"">
                 <div class=""summary-card-number"">{data.TotalRulesCreated}</div>
-                <div class=""summary-card-label"">Total Rules Created Including Variants</div>
+                <div class=""summary-card-label"">Total Rules Created (Including Manual)</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
+                    {data.SuccessfulRules.Count} automated + {data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count} manual
+                </div>
             </div>
-            {(data.ManualHandlingRequired > 0 ? $@"
-            <div class=""summary-card warning"">
-                <div class=""summary-card-number"">{data.ManualHandlingRequired}</div>
-                <div class=""summary-card-label"">Manual Handling Required</div>
+        </div>
+
+        <!-- Breakdown cards - REGULAR SIZE -->
+        {((data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count + data.FailedCount) > 0 ? $@"
+        <div class=""summary"">
+            {((data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count) > 0 ? $@"
+            <div class=""summary-card warning"" onclick=""jumpToSection('nodsc-section')"">
+                <div class=""summary-card-number"">{data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count}</div>
+                <div class=""summary-card-label"">Rules Requiring Manual Intervention</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
+                    {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
+                    {(data.SkippedRules.Count > 0 ? $" • {data.SkippedRules.Count} Skipped" : "")}
+                    {(data.HardCodedRules.Count > 0 ? $" • {data.HardCodedRules.Count} Hard Coded" : "")}
+                </div>
             </div>" : "")}
             {(data.FailedCount > 0 ? $@"
-            <div class=""summary-card error"">
+            <div class=""summary-card error"" onclick=""jumpToSection('failed-section')"">
                 <div class=""summary-card-number"">{data.FailedCount}</div>
-                <div class=""summary-card-label"">Errors (Run convert again to get a clean conversion)</div>
+                <div class=""summary-card-label"">Failed Conversions</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Rerun conversion to skip these failures</div>
             </div>" : "")}
-        </div>
+        </div>" : "")}
 
             {GenerateSection("failed", "Failed Rule Conversions", data.FailedRules, data.FailedRuleDetails, "error")}
             {GenerateSection("nodsc", "Rules with No DSC Resource", data.NoDscResourceRules, data.NoDscRuleDetails, "warning")}

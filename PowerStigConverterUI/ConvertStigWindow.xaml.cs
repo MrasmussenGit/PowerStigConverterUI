@@ -750,15 +750,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                             AppendInfo($"Added {sortedFailures.Count} failed rule(s) as SKIPs to log file: {logPath}",
                                 System.Windows.Media.Brushes.DarkOrange, null);
 
-                            // Show message box if log file was just created (didn't exist before)
-                            if (!logFileExistedBefore)
-                            {
-                                System.Windows.MessageBox.Show(
-                                    "Errors during conversion, a log file was created. Run convert again to get a clean conversion.",
-                                    "Log File Created",
-                                    MessageBoxButton.OK,
-                                    MessageBoxImage.Information);
-                            }
+
                         }
                         catch (Exception logEx)
                         {
@@ -1042,7 +1034,16 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 {
                     AppendInfo($"Warning: Failed to generate report: {reportEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
                 }
-
+                if (!logFileExistedBefore && logFileWasWritten)
+                {
+                    System.Windows.MessageBox.Show(
+                        $"Conversion complete with {normalizedFailedIds.Count} error(s).\n\n" +
+                        "A log file was created to skip these failures.\n" +
+                        "Run the conversion again to get a clean output without these errors.",
+                        "Log File Created - Rerun Recommended",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
                 InfoRichTextBox.ScrollToHome();
             }

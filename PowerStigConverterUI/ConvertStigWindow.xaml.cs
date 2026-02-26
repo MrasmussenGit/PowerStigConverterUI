@@ -1812,14 +1812,15 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
         {
             var info = new RuleInfo { RuleId = ruleId };
 
-            // Always fill from XCCDF (original file)
+            // Always fill from XCCDF (original file) - this may normalize the RuleId to base form
             TryFillFromXccdf(ruleId, xccdfPath, info);
 
             // Only use converted outputs for V- rules
+            // IMPORTANT: Use the ORIGINAL ruleId (with variant suffix like .a, .b) for converted search
             if (ruleId.StartsWith("V-", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(convertedFolder) && Directory.Exists(convertedFolder))
             {
-                TryFillFromConverted(info.RuleId, convertedFolder!, info);
+                TryFillFromConverted(ruleId, convertedFolder!, info);  // Changed from info.RuleId to ruleId
             }
             else
             {

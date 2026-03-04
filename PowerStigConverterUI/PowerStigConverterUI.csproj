@@ -8,5 +8,11 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Version>1.0.0.12</Version>
+    <ApplicationIcon>Images\App.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Images\**\*" />
+  </ItemGroup>
+
 </Project>

@@ -104,6 +104,13 @@
             <!-- Actions (right aligned) -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="ConvertButton" Content="Convert" Width="120" Margin="0,0,8,0" Click="ConvertButton_Click"/>
+                <Button x:Name="ViewReportButton" 
+                        Content="View Report" 
+                        Width="120" 
+                        Margin="0,0,8,0" 
+                        Click="ViewReportButton_Click"
+                        Visibility="Collapsed"
+                        IsEnabled="False"/>
                 <Button x:Name="CloseButton" Content="Close" Width="120" Click="CloseButton_Click"/>
             </StackPanel>
         </Grid>

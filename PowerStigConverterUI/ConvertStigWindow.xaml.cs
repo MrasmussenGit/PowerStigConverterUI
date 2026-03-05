@@ -28,6 +28,7 @@ namespace PowerStigConverterUI
         private DateTime _busyStart;
         private readonly System.Collections.Generic.HashSet<string> _skippedRuleIds =
     new(System.StringComparer.OrdinalIgnoreCase);
+        private string? _lastReportPath;
         public ConvertStigWindow()
         {
             InitializeComponent();
@@ -486,6 +487,11 @@ namespace PowerStigConverterUI
             _failedRuleErrors.Clear();
             _skippedRuleIds.Clear();
 
+            // Hide the View Report button until new report is generated
+            ViewReportButton.Visibility = Visibility.Collapsed;
+            ViewReportButton.IsEnabled = false;
+            _lastReportPath = null;
+
             var modulePath = ModulePathTextBox.Text?.Trim();
             var xccdfPath = XccdfPathTextBox.Text?.Trim();
             var destination = DestinationTextBox.Text?.Trim();
@@ -843,20 +849,20 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // 6. SUMMARY SECTION
                 var totalVariants = convertedIds.Count;
 
-                // Manual intervention needed: skipped + no DSC resource + hard coded (NOT failed - those were never created)
-                var manualHandlingRequired = _skippedRuleIds.Count + noDscResourceIds.Count + hardCodedRuleIds.Count;
+                // Manual intervention needed: no DSC resource + hard coded (NOT failed - those were never created; NOT skipped - those were never created)
+                var manualHandlingRequired = noDscResourceIds.Count + hardCodedRuleIds.Count;
 
                 // Rules that will be automatically handled (total created minus manual intervention)
                 var rulesAutoHandled = totalVariants - manualHandlingRequired;
 
-                // Total rules created (everything except failed, since failed rules were never created in the XML)
+                // Total rules created = all rules in the converted XML (skipped rules were never written to XML)
                 var totalRulesCreated = totalVariants;
 
-                AppendInfo($"Total: {successIds.Count} successful rule conversions created {totalVariants} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} rules set to DSCResource=\"None\", which means they won't be applied to the endpoint.",
+                AppendInfo($"Total: {successIds.Count} successful rule conversions created {totalRulesCreated} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} rules set to DSCResource=\"None\", which means they won't be applied to the endpoint.",
                     System.Windows.Media.Brushes.DarkBlue, null);
 
                 AppendInfo($"Summary:", System.Windows.Media.Brushes.DarkBlue, null);
-                AppendInfo($"\t{totalRulesCreated} total rules created", System.Windows.Media.Brushes.DarkGreen, null);
+                AppendInfo($"\t{totalRulesCreated} total rules created (excludes {_skippedRuleIds.Count} skipped)", System.Windows.Media.Brushes.DarkGreen, null);
                 AppendInfo($"\t{rulesAutoHandled} rules automatically handled", System.Windows.Media.Brushes.DarkGreen, null);
                 AppendInfo($"\t{manualHandlingRequired} manual handling required", System.Windows.Media.Brushes.OrangeRed, null);
 
@@ -1027,6 +1033,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     var reportHtml = ConversionReportGenerator.GenerateHtmlReport(reportData);
                     var reportPath = Path.ChangeExtension(convertedFilePath, ".html");
                     ConversionReportGenerator.SaveReport(reportHtml, reportPath);
+                    _lastReportPath = reportPath;
+                    ViewReportButton.Visibility = Visibility.Visible; // Show the button
+                    ViewReportButton.IsEnabled = true;
 
                     AppendInfo($"Conversion report saved: {reportPath}", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
                 }
@@ -1523,6 +1532,38 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
         {
             var oneLine = script.Replace("\r", "").Replace("\n", "; ");
             return oneLine.Replace("\"", "`\"");
+        }
+
+        private void ViewReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_lastReportPath) || !File.Exists(_lastReportPath))
+            {
+                System.Windows.MessageBox.Show(
+                    "Report file not found. Please run a conversion first.",
+                    "Report Not Available",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            try
+            {
+                // Open in default browser
+                var psi = new ProcessStartInfo
+                {
+                    FileName = _lastReportPath,
+                    UseShellExecute = true
+                };
+                Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                System.Windows.MessageBox.Show(
+                    $"Failed to open report: {ex.Message}",
+                    "Error Opening Report",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
         }
 
         private void BrowseDestination_Click(object sender, RoutedEventArgs e)

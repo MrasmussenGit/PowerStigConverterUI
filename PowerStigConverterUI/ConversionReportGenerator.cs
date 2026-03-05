@@ -171,7 +171,7 @@ namespace PowerStigConverterUI
                 <div class=""summary-card-number"">{data.TotalRulesCreated}</div>
                 <div class=""summary-card-label"">Total Rules Created (Including Manual)</div>
                 <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
-                    {data.SuccessfulRules.Count} automated + {data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count} manual
+                    {data.SuccessfulRules.Count} automated + {data.NoDscResourceRules.Count + data.HardCodedRules.Count} manual
                 </div>
             </div>
         </div>
@@ -179,15 +179,20 @@ namespace PowerStigConverterUI
         <!-- Breakdown cards - REGULAR SIZE -->
         {((data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count + data.FailedCount) > 0 ? $@"
         <div class=""summary"">
-            {((data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count) > 0 ? $@"
+            {((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 ? $@"
             <div class=""summary-card warning"" onclick=""jumpToSection('nodsc-section')"">
-                <div class=""summary-card-number"">{data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count}</div>
+                <div class=""summary-card-number"">{data.NoDscResourceRules.Count + data.HardCodedRules.Count}</div>
                 <div class=""summary-card-label"">Rules Requiring Manual Intervention</div>
                 <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
                     {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
-                    {(data.SkippedRules.Count > 0 ? $" • {data.SkippedRules.Count} Skipped" : "")}
-                    {(data.HardCodedRules.Count > 0 ? $" • {data.HardCodedRules.Count} Hard Coded" : "")}
+                    {(data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")}
                 </div>
+            </div>" : "")}
+            {(data.SkippedRules.Count > 0 ? $@"
+            <div class=""summary-card info"" onclick=""jumpToSection('skipped-section')"">
+                <div class=""summary-card-number"">{data.SkippedRules.Count}</div>
+                <div class=""summary-card-label"">Rules Skipped (Not Created)</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">From skip log file</div>
             </div>" : "")}
             {(data.FailedCount > 0 ? $@"
             <div class=""summary-card error"" onclick=""jumpToSection('failed-section')"">

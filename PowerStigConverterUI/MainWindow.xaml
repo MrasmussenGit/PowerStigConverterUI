@@ -1,53 +1,57 @@
 ﻿<Window x:Class="PowerStigConverterUI.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PowerStig Converter UI" Height="260" Width="360"
-        Background="LightSteelBlue"
+        Title="PowerStig Converter UI" Height="460" Width="400"
+        Background="{StaticResource BackgroundLightBrush}"
         WindowStartupLocation="CenterScreen">
-    <Grid Margin="12">
+    <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Centered and stacked buttons in the middle row -->
-        <StackPanel Orientation="Vertical"
-                    Grid.Row="1"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-            <Button x:Name="ConvertStigButton"
-                    Content="Convert STIG"
-                    Width="220"
-                    Padding="12,8"
-                    Margin="0,0,0,10"
-                    Click="ConvertStigButton_Click"/>
-            <Button x:Name="CompareButton"
-                    Content="Compare"
-                    Width="220"
-                    Padding="12,8"
-                    Margin="0,0,0,10"
-                    Click="CompareButton_Click"/>
-            <Button x:Name="SplitStigButton"
-                    Content="Split OS STIG"
-                    Width="220"
-                    Padding="12,8"
-                    Margin="0,0,0,10"
-                    Click="SplitOsStigButton_Click"/>
-            <Button x:Name="ExitButton"
-                    Content="Exit"
-                    Width="220"
-                    Padding="12,8"
-                    Margin="0,0,0,12"
-                    Click="ExitButton_Click"/>
+        <!-- Header -->
+        <Border Grid.Row="0" Style="{StaticResource HeaderBorderStyle}">
+            <TextBlock Text="PowerStig Converter" Style="{StaticResource HeaderTitleStyle}"/>
+        </Border>
 
+        <!-- Main Content -->
+        <Grid Grid.Row="1" Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Centered and stacked buttons -->
+            <StackPanel Orientation="Vertical"
+                        Grid.Row="0"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Button x:Name="ConvertStigButton"
+                        Content="Convert STIG"
+                        Style="{StaticResource MenuButtonStyle}"
+                        Click="ConvertStigButton_Click"/>
+                <Button x:Name="CompareButton"
+                        Content="Compare"
+                        Style="{StaticResource MenuButtonStyle}"
+                        Click="CompareButton_Click"/>
+                <Button x:Name="SplitStigButton"
+                        Content="Split OS STIG"
+                        Style="{StaticResource MenuButtonStyle}"
+                        Click="SplitOsStigButton_Click"/>
+                <Button x:Name="ExitButton"
+                        Content="Exit"
+                        Style="{StaticResource MenuButtonStyle}"
+                        Click="ExitButton_Click"/>
+            </StackPanel>
+
+            <!-- Version Info -->
             <TextBlock x:Name="VersionTextBlock"
+                       Grid.Row="1"
                        Text="Version"
-                       Foreground="DarkGreen"
-                       FontWeight="SemiBold"
-                       HorizontalAlignment="Center"/>
-        </StackPanel>
-
-        <ContentPresenter Grid.Row="2"/>
+                       Style="{StaticResource SmallTextStyle}"
+                       HorizontalAlignment="Center"
+                       Margin="0,10,0,0"/>
+        </Grid>
     </Grid>
 </Window>

@@ -1,7 +1,8 @@
 ﻿<Window x:Class="PowerStigConverterUI.CompareWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Compare DISA vs PowerSTIG" Height="460" Width="875"
+        Title="Compare DISA vs PowerSTIG" Height="680" Width="1100"
+        Background="{StaticResource BackgroundLightBrush}"
         WindowStartupLocation="CenterOwner"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
     <Window.Resources>
@@ -24,7 +25,19 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="10">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Style="{StaticResource HeaderBorderStyle}">
+            <TextBlock Text="Compare DISA vs PowerSTIG" Style="{StaticResource HeaderTitleStyle}"/>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1" Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -38,28 +51,27 @@
 
         <TextBlock Grid.ColumnSpan="2"
                    Text="Select files and press Compare"
-                   FontWeight="Bold"
-                   FontSize="13"
+                   Style="{StaticResource SectionTitleStyle}"
                    Margin="0,0,0,8"/>
 
         <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,0,8,10">
-            <TextBlock VerticalAlignment="Center" Text="DISA file:" Margin="0,0,6,0" FontSize="12"/>
-            <TextBox x:Name="DisaPathTextBox" Width="240" Margin="0,0,6,0"/>
-            <Button Content="Browse…" Width="84" Click="BrowseDisa_Click"/>
+            <TextBlock VerticalAlignment="Center" Text="DISA file:" Margin="0,0,6,0" Style="{StaticResource LabelTextStyle}"/>
+            <TextBox x:Name="DisaPathTextBox" Width="335" Margin="0,0,6,0"/>
+            <Button Content="Browse…" Style="{StaticResource StandardButtonStyle}" Width="84" Click="BrowseDisa_Click"/>
         </StackPanel>
 
         <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
-            <TextBlock VerticalAlignment="Center" Text="PowerSTIG file:" Margin="0,0,6,0" FontSize="12"/>
-            <TextBox x:Name="PsPathTextBox" Width="240" Margin="0,0,6,0"/>
-            <Button Content="Browse…" Width="84" Click="BrowsePs_Click"/>
+            <TextBlock VerticalAlignment="Center" Text="PowerSTIG file:" Margin="0,0,6,0" Style="{StaticResource LabelTextStyle}"/>
+            <TextBox x:Name="PsPathTextBox" Width="335" Margin="0,0,6,0"/>
+            <Button Content="Browse…" Style="{StaticResource StandardButtonStyle}" Width="84" Click="BrowsePs_Click"/>
         </StackPanel>
 
         <Grid Grid.Row="2" Grid.ColumnSpan="2">
             <Grid.ColumnDefinitions>
-                <!-- Make result columns narrower and content-sized -->
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
+                <!-- Equal width columns to fill the space -->
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -67,12 +79,12 @@
             </Grid.RowDefinitions>
 
             <StackPanel Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,6">
-                <Button Content="Compare" Width="84" Click="Compare_Click"/>
+                <Button Content="Compare" Style="{StaticResource PrimaryButtonStyle}" Width="110" Click="Compare_Click"/>
                 <TextBlock x:Name="InfoTextBlock" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12"/>
             </StackPanel>
 
             <!-- Matched on the left -->
-            <GroupBox Grid.Row="1" Grid.Column="0" Header="Matched (common IDs)" Margin="0,0,6,0" Width="260">
+            <GroupBox Grid.Row="1" Grid.Column="0" Header="Matched (common IDs)" Margin="0,0,3,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -92,7 +104,7 @@
             </GroupBox>
 
             <!-- Missing in the middle -->
-            <GroupBox Grid.Row="1" Grid.Column="1" Header="Missing (in PowerSTIG)" Margin="3,0,3,0" Width="260">
+            <GroupBox Grid.Row="1" Grid.Column="1" Header="Missing (in PowerSTIG)" Margin="3,0,3,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -112,7 +124,7 @@
             </GroupBox>
 
             <!-- Added on the right -->
-            <GroupBox Grid.Row="1" Grid.Column="2" Header="Added (extra in PowerSTIG)" Margin="6,0,0,0" Width="260">
+            <GroupBox Grid.Row="1" Grid.Column="2" Header="Added (extra in PowerSTIG)" Margin="3,0,0,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -133,7 +145,8 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-            <Button Content="Close" Width="84" IsCancel="True"/>
+            <Button Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="84" IsCancel="True"/>
         </StackPanel>
+        </Grid>
     </Grid>
 </Window>

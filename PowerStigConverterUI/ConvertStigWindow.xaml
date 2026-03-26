@@ -54,7 +54,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- XCCDF -->
-                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="XCCDF file:" Style="{StaticResource LabelTextStyle}"/>
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="XCCDF or ZIP file:" Style="{StaticResource LabelTextStyle}"/>
                 <TextBox x:Name="XccdfPathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,8,4" MinWidth="500"/>
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse..." Style="{StaticResource StandardButtonStyle}" Click="BrowseXccdf_Click" Margin="0,0,0,4"/>
 

@@ -22,8 +22,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Source file selection -->
@@ -33,8 +33,8 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="DISA STIG XML:" VerticalAlignment="Center" Margin="0,0,8,0" Style="{StaticResource LabelTextStyle}"/>
-            <TextBox x:Name="SourcePathTextBox" Grid.Column="1" Margin="0,0,8,0"/>
+            <TextBlock Text="DISA STIG XML or ZIP:" VerticalAlignment="Center" Margin="0,0,8,0" Style="{StaticResource LabelTextStyle}"/>
+            <TextBox x:Name="SourcePathTextBox" Grid.Column="1" Margin="0,0,8,0" VerticalContentAlignment="Center"/>
             <Button Grid.Column="2" Content="Browse…" Style="{StaticResource StandardButtonStyle}" Width="90" Click="Browse_Click"/>
         </Grid>
 
@@ -46,7 +46,7 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Text="Destination folder:" VerticalAlignment="Center" Margin="0,0,8,0" Style="{StaticResource LabelTextStyle}"/>
-            <TextBox x:Name="DestinationPathTextBox" Grid.Column="1" Margin="0,0,8,0"/>
+            <TextBox x:Name="DestinationPathTextBox" Grid.Column="1" Margin="0,0,8,0" VerticalContentAlignment="Center"/>
             <Button x:Name="DestinationBrowseButton" Grid.Column="2" Content="Browse…" Style="{StaticResource StandardButtonStyle}" Width="90" Click="DestinationBrowse_Click"/>
         </Grid>
 
@@ -55,22 +55,37 @@
             <CheckBox x:Name="OverwriteCheckBox" Content="Overwrite if files exist" IsChecked="True"/>
         </StackPanel>
 
-        <!-- Actions and status -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,10">
-            <Button x:Name="SplitButton" Content="Split" Style="{StaticResource PrimaryButtonStyle}" Width="100" Click="SplitButton_Click"/>
-            <TextBlock x:Name="StatusText" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
-            <Button x:Name="CloseButton" Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="90" Margin="12,0,0,0" Click="CloseButton_Click"/>
-        </StackPanel>
-
         <!-- Output -->
-        <TextBox x:Name="OutputTextBox"
-                 Grid.Row="4"
-                 Margin="0"
-                 IsReadOnly="True"
-                 Height="135"
-                 VerticalScrollBarVisibility="Auto"
-                 HorizontalScrollBarVisibility="Auto"
-                 TextWrapping="Wrap"/>
+        <RichTextBox x:Name="OutputRichTextBox"
+                     Grid.Row="3"
+                     Margin="0"
+                     IsReadOnly="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     FontFamily="Consolas"
+                     FontSize="11"
+                     Background="White">
+            <RichTextBox.Document>
+                <FlowDocument/>
+            </RichTextBox.Document>
+        </RichTextBox>
+
+        <!-- Bottom bar: Status left, Actions right -->
+        <Grid Grid.Row="4" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Status text (left aligned) -->
+            <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+
+            <!-- Actions (right aligned) -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="SplitButton" Content="Split" Style="{StaticResource PrimaryButtonStyle}" Width="100" Margin="0,0,8,0" Click="SplitButton_Click"/>
+                <Button x:Name="CloseButton" Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="90" Click="CloseButton_Click"/>
+            </StackPanel>
+        </Grid>
         </Grid>
     </Grid>
 </Window>

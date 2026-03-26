@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Windows;
@@ -411,13 +412,27 @@ namespace PowerStigConverterUI
             if (string.IsNullOrWhiteSpace(xccdfPath)) return null;
 
             var directory = Path.GetDirectoryName(xccdfPath);
-            var fileNameNoExt = Path.GetFileNameWithoutExtension(xccdfPath); // U_MS_IIS_8-5_Server_STIG_V2R4_Manual-xccdf
+            var fileName = Path.GetFileName(xccdfPath);
 
-            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileNameNoExt))
+            // Handle ZIP files - remove .zip extension and use the base name for the log
+            if (fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var fileNameNoExt = Path.GetFileNameWithoutExtension(xccdfPath); // U_MS_DotNet_Framework_4-0_STIG_V2R5_Manual
+                if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileNameNoExt))
+                    return null;
+
+                // Result: U_MS_DotNet_Framework_4-0_STIG_V2R5_Manual.log in the same directory as the ZIP
+                return Path.Combine(directory, fileNameNoExt + ".log");
+            }
+
+            // Handle XCCDF XML files - remove -xccdf.xml extension
+            var fileNameNoExt2 = Path.GetFileNameWithoutExtension(xccdfPath); // U_MS_IIS_8-5_Server_STIG_V2R4_Manual-xccdf
+
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileNameNoExt2))
                 return null;
 
             // Result: U_MS_IIS_8-5_Server_STIG_V2R4_Manual-xccdf.log in the same directory
-            return Path.Combine(directory, fileNameNoExt + ".log");
+            return Path.Combine(directory, fileNameNoExt2 + ".log");
         }
         private static void AppendFailedRulesToLog(string logPath, System.Collections.Generic.IEnumerable<string> failedRuleIds)
         {
@@ -480,6 +495,75 @@ namespace PowerStigConverterUI
             }
             return ids;
         }
+
+        /// <summary>
+        /// Extracts a ZIP file to a temporary directory and searches recursively for an XCCDF XML file.
+        /// Returns the path to the found XCCDF file, or null if not found.
+        /// </summary>
+        private static string? ExtractAndFindXccdfFromZip(string zipPath, out string? tempExtractPath)
+        {
+            tempExtractPath = null;
+            try
+            {
+                // Create a unique temporary directory for extraction
+                var tempDir = Path.Combine(Path.GetTempPath(), $"PowerStigZip_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                tempExtractPath = tempDir;
+
+                // Extract the ZIP file
+                System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, tempDir);
+
+                // Search recursively for XCCDF XML files
+                var xccdfFiles = Directory.GetFiles(tempDir, "*xccdf*.xml", SearchOption.AllDirectories);
+
+                if (xccdfFiles.Length == 0)
+                {
+                    // Try broader search for any XML files
+                    var allXmlFiles = Directory.GetFiles(tempDir, "*.xml", SearchOption.AllDirectories);
+                    xccdfFiles = allXmlFiles.Where(f => 
+                        Path.GetFileName(f).Contains("xccdf", StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetFileName(f).Contains("Manual", StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+                }
+
+                if (xccdfFiles.Length > 0)
+                {
+                    // Return the first XCCDF file found
+                    return xccdfFiles[0];
+                }
+
+                return null;
+            }
+            catch
+            {
+                // Clean up temp directory if extraction failed
+                if (!string.IsNullOrWhiteSpace(tempExtractPath) && Directory.Exists(tempExtractPath))
+                {
+                    try { Directory.Delete(tempExtractPath, true); } catch { /* ignore cleanup errors */ }
+                }
+                tempExtractPath = null;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Cleans up a temporary extraction directory.
+        /// </summary>
+        private static void CleanupTempExtraction(string? tempPath)
+        {
+            if (string.IsNullOrWhiteSpace(tempPath) || !Directory.Exists(tempPath))
+                return;
+
+            try
+            {
+                Directory.Delete(tempPath, true);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
+
         private async void ConvertButton_Click(object sender, RoutedEventArgs e)
         {
             InfoRichTextBox.Document.Blocks.Clear();
@@ -493,13 +577,53 @@ namespace PowerStigConverterUI
             _lastReportPath = null;
 
             var modulePath = ModulePathTextBox.Text?.Trim();
-            var xccdfPath = XccdfPathTextBox.Text?.Trim();
+            var inputPath = XccdfPathTextBox.Text?.Trim();
             var destination = DestinationTextBox.Text?.Trim();
             var createOrgSettings = CreateOrgSettingsCheckBox.IsChecked == true;
             var addFailedRulesToLog = AddFailedRulesToLogCheckBox.IsChecked == true;
 
+            // Check if input is a ZIP file and extract if needed
+            string? xccdfPath = inputPath;
+            string? tempExtractPath = null;
+            bool isZipInput = false;
+
+            if (!string.IsNullOrWhiteSpace(inputPath) && File.Exists(inputPath))
+            {
+                var extension = Path.GetExtension(inputPath);
+                if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    isZipInput = true;
+                    AppendInfo($"ZIP file detected, extracting and searching for XCCDF XML...", System.Windows.Media.Brushes.DarkBlue, null);
+
+                    xccdfPath = ExtractAndFindXccdfFromZip(inputPath, out tempExtractPath);
+
+                    if (string.IsNullOrWhiteSpace(xccdfPath))
+                    {
+                        AppendInfo("Could not find XCCDF XML file in the ZIP archive.", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                        CleanupTempExtraction(tempExtractPath);
+                        return;
+                    }
+
+                    AppendInfo($"Found XCCDF file: {Path.GetFileName(xccdfPath)}", System.Windows.Media.Brushes.DarkGreen, null);
+                }
+            }
+
             // Read existing skips and hard coded rules from log file BEFORE conversion starts
-            var logPath = DeriveLogFilePathFromXccdf(xccdfPath);
+            // IMPORTANT: Log filename must be derived from XCCDF (to match PowerSTIG expectations),
+            // but placed in the same directory as the user's input file (ZIP or XCCDF)
+            string? logPath = null;
+            if (isZipInput && !string.IsNullOrWhiteSpace(inputPath) && !string.IsNullOrWhiteSpace(xccdfPath))
+            {
+                // For ZIP files: derive log filename from XCCDF, but place in ZIP's directory
+                var zipDirectory = Path.GetDirectoryName(inputPath)!;
+                var xccdfBaseName = Path.GetFileNameWithoutExtension(xccdfPath); // e.g., "U_MS_IIS_10-0_Server_STIG_V3R6_Manual-xccdf"
+                logPath = Path.Combine(zipDirectory, xccdfBaseName + ".log");
+            }
+            else
+            {
+                // For direct XCCDF files: standard derivation
+                logPath = DeriveLogFilePathFromXccdf(xccdfPath);
+            }
             System.Collections.Generic.HashSet<string> hardCodedRuleIds = new(StringComparer.OrdinalIgnoreCase);
             bool logFileExistedBefore = !string.IsNullOrWhiteSpace(logPath) && File.Exists(logPath);
             string logFileStatus = "not applicable";
@@ -547,6 +671,33 @@ namespace PowerStigConverterUI
             {
                 AppendInfo("No log file loaded, log file missing from the xccdf file location.", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
             }
+
+            // For ZIP files, copy log file to temp directory so PowerSTIG can find it
+            string? tempLogPath = null;
+            if (isZipInput && logFileExistedBefore && !string.IsNullOrWhiteSpace(logPath) && !string.IsNullOrWhiteSpace(xccdfPath))
+            {
+                try
+                {
+                    // PowerSTIG looks for log file in same directory as XCCDF with a name derived from the XCCDF
+                    var xccdfDir = Path.GetDirectoryName(xccdfPath)!;
+
+                    // Derive the log filename PowerSTIG expects based on the XCCDF filename
+                    var expectedLogPath = DeriveLogFilePathFromXccdf(xccdfPath);
+                    if (!string.IsNullOrWhiteSpace(expectedLogPath))
+                    {
+                        tempLogPath = expectedLogPath;
+
+                        // Copy log file to temp location with PowerSTIG-expected name
+                        File.Copy(logPath, tempLogPath, overwrite: true);
+                        AppendInfo($"Copied log file to temp directory with PowerSTIG-expected name: {Path.GetFileName(tempLogPath)}", System.Windows.Media.Brushes.DarkOrange, null);
+                    }
+                }
+                catch (Exception logCopyEx)
+                {
+                    AppendInfo($"Warning: Could not copy log file to temp directory: {logCopyEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                }
+            }
+
             SetBusy(true, "Converting…");
             AppendInfo("Starting conversion with Windows PowerShell 5.x...", System.Windows.Media.Brushes.DarkGreen, null);
 
@@ -554,6 +705,9 @@ namespace PowerStigConverterUI
             {
                 var moduleRoot = Path.GetDirectoryName(modulePath)!;
                 var tempScript = Path.Combine(Path.GetTempPath(), $"PowerStigConvert_{Guid.NewGuid():N}.ps1");
+
+                // PowerSTIG automatically discovers and uses log files in the XCCDF directory
+                // No need to pass skip rules as parameters - they're read from the log file
                 var scriptContent = @"
 param(
     [string]$Psm1,
@@ -566,7 +720,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 ";
                 File.WriteAllText(tempScript, scriptContent, new UTF8Encoding(false));
 
-                var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" \"{modulePath}\" \"{xccdfPath}\" \"{destination}\" \"Windows\"";
+                var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" -Psm1 \"{modulePath}\" -XccdfPath \"{xccdfPath}\" -Destination \"{destination}\"";
 
                 var psi = new ProcessStartInfo
                 {
@@ -578,6 +732,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     CreateNoWindow = true,
                     WorkingDirectory = moduleRoot
                 };
+
+                // Capture process result to avoid throwing from background thread
+                int exitCode = 0;
+                string? processError = null;
 
                 await System.Threading.Tasks.Task.Run(() =>
                 {
@@ -630,9 +788,19 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                     try { File.Delete(tempScript); } catch { /* ignore */ }
 
-                    if (proc.ExitCode != 0)
-                        throw new InvalidOperationException($"Windows PowerShell exited with code {proc.ExitCode}. First error:\n{stdErr.Trim()}");
+                    // Capture exit code and error for handling on UI thread
+                    exitCode = proc.ExitCode;
+                    if (exitCode != 0)
+                    {
+                        processError = $"Windows PowerShell exited with code {exitCode}. First error:\n{stdErr.Trim()}";
+                    }
                 });
+
+                // Handle process failure on UI thread after Task.Run completes
+                if (exitCode != 0)
+                {
+                    throw new InvalidOperationException(processError ?? "PowerShell process failed with unknown error");
+                }
 
                 string? expectedFileName = GetConvertedFileName(xccdfPath!);
                 string resolvedPath = ResolveConvertedFullPath(destination!, expectedFileName!);
@@ -796,33 +964,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     }
                 }
 
-                // 4. NO DSC RESOURCE rules (converted but won't be applied)
-                if (noDscResourceIds.Count > 0)
-                {
-                    var sortedNoDsc = noDscResourceIds
-                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
-                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-
-                    AppendInfo($"Rules with no DSC resource - will not be applied ({sortedNoDsc.Count}):", System.Windows.Media.Brushes.DarkMagenta, null);
-                    foreach (var vId in sortedNoDsc)
-                    {
-                        AppendInfo($" - {vId} (dscresource=\"None\")", System.Windows.Media.Brushes.DarkMagenta, null);
-                    }
-                }
-
-                // Determine log file status
-                if (!string.IsNullOrWhiteSpace(logPath))
-                {
-                    if (!logFileExistedBefore && logFileWasWritten)
-                        logFileStatus = "created";
-                    else if (logFileExistedBefore && logFileWasWritten)
-                        logFileStatus = "updated";
-                    else if (logFileExistedBefore && !logFileWasWritten)
-                        logFileStatus = "unchanged";
-                }
-
-                // 5. SUCCESSFUL CONVERSIONS with variant info
+                // 4. SUCCESSFUL CONVERSIONS with variant info (AUTOMATED RULES)
                 if (successIds.Count > 0)
                 {
                     AppendInfo($"Successfully converted rule IDs ({successIds.Count}):", System.Windows.Media.Brushes.DarkGreen, null);
@@ -843,7 +985,33 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 }
                 else
                 {
-                    AppendInfo("No successfully converted rule IDs.", System.Windows.Media.Brushes.DarkGreen, null);
+                    AppendInfo("No automated rules (all rules require manual handling).", System.Windows.Media.Brushes.DarkGreen, null);
+                }
+
+                // 5. NO DSC RESOURCE rules (converted but won't be applied) - SHOWN LAST
+                if (noDscResourceIds.Count > 0)
+                {
+                    var sortedNoDsc = noDscResourceIds
+                        .OrderBy(id => ExtractNumericKey(id, prefix: "V-"))
+                        .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    AppendInfo($"Manual rules - no DSC automation available ({sortedNoDsc.Count}):", System.Windows.Media.Brushes.DarkMagenta, null);
+                    foreach (var vId in sortedNoDsc)
+                    {
+                        AppendInfo($" - {vId} (dscresource=\"None\" - requires manual implementation)", System.Windows.Media.Brushes.DarkMagenta, null);
+                    }
+                }
+
+                // Determine log file status
+                if (!string.IsNullOrWhiteSpace(logPath))
+                {
+                    if (!logFileExistedBefore && logFileWasWritten)
+                        logFileStatus = "created";
+                    else if (logFileExistedBefore && logFileWasWritten)
+                        logFileStatus = "updated";
+                    else if (logFileExistedBefore && !logFileWasWritten)
+                        logFileStatus = "unchanged";
                 }
 
                 // 6. SUMMARY SECTION
@@ -858,7 +1026,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // Total rules created = all rules in the converted XML (skipped rules were never written to XML)
                 var totalRulesCreated = totalVariants;
 
-                AppendInfo($"Total: {successIds.Count} successful rule conversions created {totalRulesCreated} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} rules set to DSCResource=\"None\", which means they won't be applied to the endpoint.",
+                AppendInfo($"Total: {successIds.Count} automated rule conversions created {totalRulesCreated} total rules including rule variants (.a, .b, .c, etc.), {normalizedFailedIds.Count} new failed, {_skippedRuleIds.Count} skipped, {hardCodedRuleIds.Count} hard coded, {noDscResourceIds.Count} manual rules (no DSC automation available).",
                     System.Windows.Media.Brushes.DarkBlue, null);
 
                 AppendInfo($"Summary:", System.Windows.Media.Brushes.DarkBlue, null);
@@ -1062,8 +1230,29 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
             finally
             {
+                // For ZIP files, copy log file back from temp to original location
+                if (isZipInput && !string.IsNullOrWhiteSpace(tempLogPath) && File.Exists(tempLogPath) && !string.IsNullOrWhiteSpace(logPath))
+                {
+                    try
+                    {
+                        // Copy log file back to original location (with ZIP file)
+                        File.Copy(tempLogPath, logPath, overwrite: true);
+                        AppendInfo($"Updated log file copied back to original location: {logPath}", System.Windows.Media.Brushes.DarkOrange, null);
+                    }
+                    catch (Exception logCopyBackEx)
+                    {
+                        AppendInfo($"Warning: Could not copy log file back: {logCopyBackEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                    }
+                }
+
                 SetBusy(false);
                 ConvertButton.IsEnabled = true;
+
+                // Clean up temporary ZIP extraction directory if it was created
+                if (isZipInput && !string.IsNullOrWhiteSpace(tempExtractPath))
+                {
+                    CleanupTempExtraction(tempExtractPath);
+                }
             }
         }
 
@@ -1582,8 +1771,8 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
         {
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
-                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*",
-                Title = "Select XCCDF XML File"
+                Filter = "STIG files (*.xml;*.zip)|*.xml;*.zip|XML files (*.xml)|*.xml|ZIP files (*.zip)|*.zip|All files (*.*)|*.*",
+                Title = "Select XCCDF XML or DISA STIG ZIP File"
             };
             if (openFileDialog.ShowDialog() == true)
             {

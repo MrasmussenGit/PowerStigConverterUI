@@ -1,8 +1,12 @@
 ﻿using System;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Forms;
+using System.Windows.Documents;
+using System.Windows.Media;
+using Brushes = System.Windows.Media.Brushes;
 
 namespace PowerStigConverterUI
 {
@@ -16,19 +20,109 @@ namespace PowerStigConverterUI
             @"^U_MS_(Windows(?:_Server)?(?:_\d{2,4}|_\d{1,2})?_STIG)_V\d+R\d+_Manual-xccdf$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        private string? _tempExtractPath = null;
+        private string? _actualXccdfPath = null; // Track actual XCCDF path (from ZIP or direct)
+        private string? _lastDestinationDirectory = null; // Track last directory used by destination folder browse button
+
         public SplitStigWindow()
         {
             InitializeComponent();
+            this.Closing += SplitStigWindow_Closing;
+
+            // Load persisted directory settings
+            _lastDestinationDirectory = AppSettings.Instance.LastSplitDestinationDirectory;
+        }
+
+        private void AppendOutput(string message, System.Windows.Media.Brush? foreground = null, System.Windows.Media.Brush? background = null)
+        {
+            var para = new Paragraph();
+            var run = new Run(message);
+
+            if (foreground is not null) 
+                run.Foreground = foreground;
+            if (background is not null) 
+                para.Background = background;
+
+            para.Inlines.Add(run);
+            OutputRichTextBox.Document.Blocks.Add(para);
+            OutputRichTextBox.ScrollToEnd();
+        }
+
+        private void SplitStigWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            // Save directory settings for next time
+            AppSettings.Instance.LastSplitDestinationDirectory = _lastDestinationDirectory;
+            AppSettings.Instance.Save();
+
+            // Clean up temp extraction directory
+            CleanupTempExtraction();
+        }
+
+        private void CleanupTempExtraction()
+        {
+            if (string.IsNullOrWhiteSpace(_tempExtractPath) || !Directory.Exists(_tempExtractPath))
+                return;
+
+            try
+            {
+                Directory.Delete(_tempExtractPath, true);
+                _tempExtractPath = null;
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
+
+        private static string? ExtractAndFindXccdfFromZip(string zipPath, out string? tempExtractPath)
+        {
+            tempExtractPath = null;
+            try
+            {
+                var tempDir = Path.Combine(Path.GetTempPath(), $"PowerStigZip_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                tempExtractPath = tempDir;
+
+                ZipFile.ExtractToDirectory(zipPath, tempDir);
+
+                var xccdfFiles = Directory.GetFiles(tempDir, "*xccdf*.xml", SearchOption.AllDirectories);
+
+                if (xccdfFiles.Length == 0)
+                {
+                    var allXmlFiles = Directory.GetFiles(tempDir, "*.xml", SearchOption.AllDirectories);
+                    xccdfFiles = allXmlFiles.Where(f =>
+                        Path.GetFileName(f).Contains("xccdf", StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetFileName(f).Contains("Manual", StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+                }
+
+                if (xccdfFiles.Length > 0)
+                {
+                    return xccdfFiles[0];
+                }
+
+                return null;
+            }
+            catch
+            {
+                if (!string.IsNullOrWhiteSpace(tempExtractPath) && Directory.Exists(tempExtractPath))
+                {
+                    try { Directory.Delete(tempExtractPath, true); } catch { /* ignore */ }
+                }
+                tempExtractPath = null;
+                return null;
+            }
         }
 
         private void Browse_Click(object sender, RoutedEventArgs e)
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Select DISA Windows OS STIG XML",
-                Filter = "XML files (*.xml)|*.xml|All files (*.*)|*.*",
+                Title = "Select DISA Windows OS STIG XML or ZIP File",
+                Filter = "STIG files (*.xml;*.zip)|*.xml;*.zip|XML files (*.xml)|*.xml|ZIP files (*.zip)|*.zip|All files (*.*)|*.*",
                 CheckFileExists = true
             };
+
             if (dlg.ShowDialog(this) == true)
             {
                 SourcePathTextBox.Text = dlg.FileName;
@@ -38,25 +132,27 @@ namespace PowerStigConverterUI
 
         private void DestinationBrowse_Click(object sender, RoutedEventArgs e)
         {
-            var src = SourcePathTextBox.Text?.Trim();
-            var initialDir = !string.IsNullOrWhiteSpace(src) && File.Exists(src)
-                ? Path.GetDirectoryName(src)!
-                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
-            using var fbd = new FolderBrowserDialog
+            using var fbd = new System.Windows.Forms.FolderBrowserDialog
             {
                 Description = "Select destination folder for split STIG files",
                 UseDescriptionForTitle = true,
-                ShowNewFolderButton = true,
-                SelectedPath = initialDir
+                ShowNewFolderButton = true
             };
 
+            // Only set SelectedPath if we have a saved location
+            if (!string.IsNullOrWhiteSpace(_lastDestinationDirectory) && Directory.Exists(_lastDestinationDirectory))
+            {
+                fbd.SelectedPath = _lastDestinationDirectory;
+            }
+
             var result = fbd.ShowDialog();
-            //string val = result.ToString();
-            //bool val1 = Convert.ToBoolean(val);
             if (result.ToString() == "OK" && !string.IsNullOrWhiteSpace(fbd.SelectedPath))
             {
                 DestinationPathTextBox.Text = fbd.SelectedPath;
+                // Remember the directory for next time
+                _lastDestinationDirectory = fbd.SelectedPath;
+                AppSettings.Instance.LastSplitDestinationDirectory = _lastDestinationDirectory;
+                AppSettings.Instance.Save();
             }
         }
 
@@ -65,16 +161,47 @@ namespace PowerStigConverterUI
             // Do not clear; keep history of writes
             StatusText.Text = string.Empty;
 
-            var src = SourcePathTextBox.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(src) || !File.Exists(src))
+            // Clean up any previous temp extraction
+            CleanupTempExtraction();
+            _actualXccdfPath = null;
+
+            var srcInput = SourcePathTextBox.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(srcInput) || !File.Exists(srcInput))
             {
-                StatusText.Text = "Invalid source XML path.";
+                StatusText.Text = "Invalid source file path.";
                 return;
             }
+
+            // Check if input is ZIP and extract if needed
+            string? src = srcInput;
+            var extension = Path.GetExtension(srcInput);
+            bool isZipInput = extension.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+
+            if (isZipInput)
+            {
+                StatusText.Text = "Extracting ZIP file...";
+                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ZIP file detected, extracting...{Environment.NewLine}", Brushes.DarkBlue);
+
+                src = ExtractAndFindXccdfFromZip(srcInput, out _tempExtractPath);
+
+                if (string.IsNullOrWhiteSpace(src))
+                {
+                    StatusText.Text = "Could not find XCCDF XML in ZIP archive.";
+                    AppendOutput($"Error: Could not find XCCDF XML file in ZIP archive.{Environment.NewLine}{Environment.NewLine}", Brushes.Red);
+                    CleanupTempExtraction();
+                    return;
+                }
+
+                AppendOutput($"Found XCCDF: {Path.GetFileName(src)}{Environment.NewLine}", Brushes.DarkGreen);
+            }
+
+            _actualXccdfPath = src;
 
             if (!IsWindowsOsStig(src))
             {
                 StatusText.Text = "Selected file is not a Windows OS STIG. Please choose a Windows Server/Client STIG.";
+                AppendOutput($"Error: Not a Windows OS STIG.{Environment.NewLine}{Environment.NewLine}", Brushes.Red);
+                CleanupTempExtraction();
                 return;
             }
 
@@ -95,16 +222,36 @@ namespace PowerStigConverterUI
                 if (result != MessageBoxResult.Yes)
                 {
                     StatusText.Text = "Split canceled by user.";
+                    CleanupTempExtraction();
                     return;
                 }
             }
 
+            // For ZIP inputs, determine destination directory
+            // Use user-specified destination, or if not set, use the directory where the ZIP file is located
             var destDirText = DestinationPathTextBox.Text?.Trim();
-            var destDir = string.IsNullOrWhiteSpace(destDirText) ? dir : destDirText;
+            string destDir;
+
+            if (!string.IsNullOrWhiteSpace(destDirText))
+            {
+                destDir = destDirText;
+            }
+            else if (isZipInput)
+            {
+                // Default to ZIP file's directory for ZIP inputs
+                destDir = Path.GetDirectoryName(srcInput)!;
+            }
+            else
+            {
+                // Default to XCCDF's directory for direct XCCDF inputs
+                destDir = dir;
+            }
 
             if (!Directory.Exists(destDir))
             {
                 StatusText.Text = "Destination folder does not exist.";
+                AppendOutput($"Error: Destination folder does not exist: {destDir}{Environment.NewLine}{Environment.NewLine}", Brushes.Red);
+                CleanupTempExtraction();
                 return;
             }
 
@@ -118,9 +265,9 @@ namespace PowerStigConverterUI
                 var msPath = Path.Combine(destDir, msName);
                 var dcPath = Path.Combine(destDir, dcName);
 
-                // Warn if target file names collide with source path
-                if (string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
+                // Warn if target file names collide with source path (only relevant for non-ZIP inputs)
+                if (!isZipInput && (string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase)))
                 {
                     var overwriteWarn = System.Windows.MessageBox.Show(
                         "One of the output files matches the selected source filename.\n" +
@@ -133,6 +280,7 @@ namespace PowerStigConverterUI
                     if (overwriteWarn != MessageBoxResult.Yes)
                     {
                         StatusText.Text = "Split canceled by user.";
+                        CleanupTempExtraction();
                         return;
                     }
                 }
@@ -159,6 +307,7 @@ namespace PowerStigConverterUI
                         if (overwritePrompt != MessageBoxResult.Yes)
                         {
                             StatusText.Text = "Split canceled by user.";
+                            CleanupTempExtraction();
                             return;
                         }
 
@@ -181,58 +330,75 @@ namespace PowerStigConverterUI
                 };
 
                 // Header per run with timestamp
-                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started{Environment.NewLine}");
-                OutputTextBox.AppendText($"Source: {src}{Environment.NewLine}");
-                OutputTextBox.AppendText($"Destination folder: {destDir}{Environment.NewLine}");
+                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started{Environment.NewLine}", Brushes.DarkBlue);
+                AppendOutput($"Source: {(isZipInput ? srcInput : src)}{Environment.NewLine}");
+                if (isZipInput)
+                {
+                    AppendOutput($"Extracted XCCDF: {Path.GetFileName(src)}{Environment.NewLine}", Brushes.DarkCyan);
+                }
+                AppendOutput($"Destination folder: {destDir}{Environment.NewLine}");
 
-                if (!string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
+                if (!isZipInput && string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendOutput($"MS target: {msPath} (skipped; same as source){Environment.NewLine}", Brushes.DarkOrange);
+                }
+                else
                 {
                     using (var writer = System.Xml.XmlWriter.Create(msPath, writerSettings))
                     {
                         xmlDoc.Save(writer);
                     }
-                    OutputTextBox.AppendText($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}");
-                }
-                else
-                {
-                    OutputTextBox.AppendText($"MS target: {msPath} (skipped; same as source){Environment.NewLine}");
+                    AppendOutput($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}", msExists ? Brushes.DarkOrange : Brushes.DarkGreen);
                 }
 
-                if (!string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
+                if (!isZipInput && string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendOutput($"DC target: {dcPath} (skipped; same as source){Environment.NewLine}", Brushes.DarkOrange);
+                }
+                else
                 {
                     using (var writer = System.Xml.XmlWriter.Create(dcPath, writerSettings))
                     {
                         xmlDoc.Save(writer);
                     }
-                    OutputTextBox.AppendText($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}");
-                }
-                else
-                {
-                    OutputTextBox.AppendText($"DC target: {dcPath} (skipped; same as source){Environment.NewLine}");
+                    AppendOutput($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}", dcExists ? Brushes.DarkOrange : Brushes.DarkGreen);
                 }
 
-                var srcLog = Path.ChangeExtension(src, ".log");
+                // Handle log file copying
+                // For ZIP inputs, look for log file in the ZIP's directory (same as ZIP file)
+                // For direct XCCDF inputs, look for log file next to the XCCDF
+                var logSearchPath = isZipInput ? srcInput : src;
+                var srcLog = Path.ChangeExtension(logSearchPath, ".log");
+
                 if (File.Exists(srcLog))
                 {
                     var msLog = Path.ChangeExtension(msPath, ".log");
                     var dcLog = Path.ChangeExtension(dcPath, ".log");
 
+                    var msLogExisted = File.Exists(msLog);
                     File.Copy(srcLog, msLog, overwrite);
-                    OutputTextBox.AppendText($"{(File.Exists(msLog) && overwrite ? "Overwritten" : "Created")} log: {msLog}{Environment.NewLine}");
+                    AppendOutput($"{(msLogExisted && overwrite ? "Overwritten" : "Created")} log: {msLog}{Environment.NewLine}", msLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
 
+                    var dcLogExisted = File.Exists(dcLog);
                     File.Copy(srcLog, dcLog, overwrite);
-                    OutputTextBox.AppendText($"{(File.Exists(dcLog) && overwrite ? "Overwritten" : "Created")} log: {dcLog}{Environment.NewLine}");
+                    AppendOutput($"{(dcLogExisted && overwrite ? "Overwritten" : "Created")} log: {dcLog}{Environment.NewLine}", dcLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
                 }
 
                 StatusText.Text = "Split completed.";
-                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split completed{Environment.NewLine}{Environment.NewLine}");
-                OutputTextBox.ScrollToEnd();
+                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split completed{Environment.NewLine}{Environment.NewLine}", Brushes.DarkGreen);
             }
             catch (Exception ex)
             {
                 StatusText.Text = $"Split failed: {ex.Message}";
-                OutputTextBox.AppendText($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split failed: {ex.Message}{Environment.NewLine}{Environment.NewLine}");
-                OutputTextBox.ScrollToEnd();
+                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split failed: {ex.Message}{Environment.NewLine}{Environment.NewLine}", Brushes.Red);
+            }
+            finally
+            {
+                // Clean up temp extraction after split completes or fails
+                if (isZipInput)
+                {
+                    CleanupTempExtraction();
+                }
             }
         }
 
@@ -249,20 +415,76 @@ namespace PowerStigConverterUI
         private void ValidateSourceIsWindowsOs()
         {
             var src = SourcePathTextBox.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(src)) return;
+            if (string.IsNullOrWhiteSpace(src) || !File.Exists(src)) return;
 
-            if (!IsWindowsOsStig(src))
+            // Check if it's a ZIP file
+            var extension = Path.GetExtension(src);
+            if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
             {
-                System.Windows.MessageBox.Show(
-                    "The selected file does not appear to be a Windows OS STIG.\n" +
-                    "Expected a name like:\n" +
-                    "  U_MS_Windows_Server_2022_STIG_VxRx_Manual-xccdf.xml\n" +
-                    "  U_MS_Windows_11_STIG_VxRx_Manual-xccdf.xml",
-                    "Invalid STIG selection",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                // For ZIP files, we need to extract and check the XCCDF inside
+                try
+                {
+                    var xccdfPath = ExtractAndFindXccdfFromZip(src, out var tempPath);
+                    if (string.IsNullOrWhiteSpace(xccdfPath))
+                    {
+                        System.Windows.MessageBox.Show(
+                            "Could not find a valid XCCDF XML file in the ZIP archive.",
+                            "Invalid ZIP file",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+
+                        // Clean up temp directory
+                        if (!string.IsNullOrWhiteSpace(tempPath) && Directory.Exists(tempPath))
+                        {
+                            try { Directory.Delete(tempPath, true); } catch { /* ignore */ }
+                        }
+                        return;
+                    }
+
+                    // Check if the extracted XCCDF is a Windows OS STIG
+                    if (!IsWindowsOsStig(xccdfPath))
+                    {
+                        System.Windows.MessageBox.Show(
+                            "The XCCDF file in the ZIP does not appear to be a Windows OS STIG.\n" +
+                            "Expected a name like:\n" +
+                            "  U_MS_Windows_Server_2022_STIG_VxRx_Manual-xccdf.xml\n" +
+                            "  U_MS_Windows_11_STIG_VxRx_Manual-xccdf.xml",
+                            "Invalid STIG selection",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+
+                    // Clean up temp directory
+                    if (!string.IsNullOrWhiteSpace(tempPath) && Directory.Exists(tempPath))
+                    {
+                        try { Directory.Delete(tempPath, true); } catch { /* ignore */ }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Windows.MessageBox.Show(
+                        $"Failed to validate ZIP file: {ex.Message}",
+                        "Validation Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
                 }
             }
+            else
+            {
+                // For direct XCCDF files, check the filename pattern
+                if (!IsWindowsOsStig(src))
+                {
+                    System.Windows.MessageBox.Show(
+                        "The selected file does not appear to be a Windows OS STIG.\n" +
+                        "Expected a name like:\n" +
+                        "  U_MS_Windows_Server_2022_STIG_VxRx_Manual-xccdf.xml\n" +
+                        "  U_MS_Windows_11_STIG_VxRx_Manual-xccdf.xml",
+                        "Invalid STIG selection",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+            }
+        }
 
         private static bool IsWindowsOsStig(string path)
         {

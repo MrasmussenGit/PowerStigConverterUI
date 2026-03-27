@@ -1032,7 +1032,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 AppendInfo($"Summary:", System.Windows.Media.Brushes.DarkBlue, null);
                 AppendInfo($"\t{totalRulesCreated} total rules created (excludes {_skippedRuleIds.Count} skipped)", System.Windows.Media.Brushes.DarkGreen, null);
                 AppendInfo($"\t{rulesAutoHandled} rules automatically handled", System.Windows.Media.Brushes.DarkGreen, null);
-                AppendInfo($"\t{manualHandlingRequired} manual handling required", System.Windows.Media.Brushes.OrangeRed, null);
+                AppendInfo($"\t{manualHandlingRequired} manual handling required", System.Windows.Media.Brushes.DarkOrange, null);
 
                 // Show failed rules separately if any exist
                 if (normalizedFailedIds.Count > 0)
@@ -1098,6 +1098,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
+                    // Calculate coverage: how many DISA base rules are covered
+                    var totalDisaRules = successIds.Count + hardCodedRuleIds.Count + noDscResourceIds.Count + normalizedFailedIds.Count + _skippedRuleIds.Count;
+                    var coveredDisaRules = successIds.Count + hardCodedRuleIds.Count + noDscResourceIds.Count;
+
                     var reportData = new ConversionReportData
                     {
                         StigName = Path.GetFileNameWithoutExtension(xccdfPath!),
@@ -1107,6 +1111,8 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                         ManualHandlingRequired = manualHandlingRequired,
                         FailedCount = normalizedFailedIds.Count,
                         IndividualDISARulesAutomated = successIds.Count, // Number of unique base IDs
+                        TotalDisaRules = totalDisaRules,
+                        CoveredDisaRules = coveredDisaRules,
                         LogFileStatus = logFileStatus,
                         FailedRules = normalizedFailedIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
                         SkippedRules = _skippedRuleIds.OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),

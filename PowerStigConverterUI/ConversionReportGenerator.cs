@@ -37,6 +37,7 @@ namespace PowerStigConverterUI
         .summary-card.warning {{ background: #fff4e5; border-left-color: #ff8c00; }}
         .summary-card.info {{ background: #e7f3ff; border-left-color: #0078d4; }}
         .summary-card-large.success {{ background: #e7f3e7; border-left-color: #107c10; }}
+        .summary-card-large.error {{ background: #fce8e8; border-left-color: #d13438; }}
         .summary-card-large.warning {{ background: #fff4e5; border-left-color: #ff8c00; }}
         .summary-card-number {{ font-size: 2em; font-weight: bold; margin-bottom: 5px; }}
         .summary-card-large .summary-card-number {{ font-size: 3em; }}
@@ -160,11 +161,37 @@ namespace PowerStigConverterUI
     <div class=""container"">
         <h1>{EscapeHtml(data.StigName)}</h1>
         <p class=""timestamp"">Generated: {data.Timestamp:yyyy-MM-dd HH:mm:ss}</p>
-        
+
+        <!-- Coverage Cards - Two column layout -->
+        {(data.TotalDisaRules > 0 ? $@"
+        <div class=""summary-row"">
+            <div class=""summary-card-large {(data.CoveredDisaRules == data.TotalDisaRules ? "success" : data.CoveredDisaRules >= data.TotalDisaRules * 0.8 ? "warning" : "error")}"" style=""cursor: default;"">
+                <div class=""summary-card-number"">{data.CoveredDisaRules}/{data.TotalDisaRules}</div>
+                <div class=""summary-card-label"">DISA STIG Rules Covered ({(data.TotalDisaRules > 0 ? (data.CoveredDisaRules * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
+                <div style=""font-size: 0.85em; color: #666; margin-top: 10px;"">
+                    {data.IndividualDISARulesAutomated} automated + {data.NoDscResourceRules.Count + data.HardCodedRules.Count} manual
+                </div>
+            </div>
+            <div class=""summary-card-large {(data.FailedCount + data.SkippedRules.Count == 0 ? "success" : "error")}"" onclick=""{(data.FailedCount > 0 ? "jumpToSection('failed-section')" : data.SkippedRules.Count > 0 ? "jumpToSection('skipped-section')" : "")}"" style=""{(data.FailedCount + data.SkippedRules.Count == 0 ? "cursor: default;" : "")}"">
+                <div class=""summary-card-number"">{data.FailedCount + data.SkippedRules.Count}</div>
+                <div class=""summary-card-label"">Missing DISA Rules</div>
+                <div style=""font-size: 0.85em; color: #666; margin-top: 10px;"">
+                    {(data.FailedCount > 0 && data.SkippedRules.Count > 0 ? $"{data.FailedCount} failed + {data.SkippedRules.Count} skipped" : 
+                      data.FailedCount > 0 ? $"{data.FailedCount} failed conversions" :
+                      data.SkippedRules.Count > 0 ? $"{data.SkippedRules.Count} skipped (from log file)" :
+                      "All rules converted!")}
+                </div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 8px; font-style: italic;"">
+                    {(data.FailedCount + data.SkippedRules.Count > 0 ? "Click to view details below" : "Not counted in coverage above")}
+                </div>
+            </div>
+        </div>" : "")}
+
         <div class=""summary"">
             <div class=""summary-card success"" onclick=""jumpToSection('success-section')"">
                 <div class=""summary-card-number"">{data.SuccessfulRules.Count}</div>
                 <div class=""summary-card-label"">Automated Rules (Including Variants)</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
             </div>
             <!-- Non-clickable stat display -->
             <div class=""summary-card info"" style=""cursor: default; opacity: 0.9;"">
@@ -186,19 +213,20 @@ namespace PowerStigConverterUI
                 <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
                     {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
                     {(data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")}
+                    <br/>Click to view details
                 </div>
             </div>" : "")}
             {(data.SkippedRules.Count > 0 ? $@"
             <div class=""summary-card info"" onclick=""jumpToSection('skipped-section')"">
                 <div class=""summary-card-number"">{data.SkippedRules.Count}</div>
                 <div class=""summary-card-label"">Rules Skipped (Not Created)</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">From skip log file</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">From skip log file • Click to view details</div>
             </div>" : "")}
             {(data.FailedCount > 0 ? $@"
             <div class=""summary-card error"" onclick=""jumpToSection('failed-section')"">
                 <div class=""summary-card-number"">{data.FailedCount}</div>
                 <div class=""summary-card-label"">Failed Conversions</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Rerun conversion to skip these failures</div>
+                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Rerun conversion to skip these failures • Click to view details</div>
             </div>" : "")}
         </div>" : "")}
 
@@ -323,6 +351,8 @@ namespace PowerStigConverterUI
         public int ManualHandlingRequired { get; set; }
         public int FailedCount { get; set; }
         public int IndividualDISARulesAutomated { get; set; }
+        public int TotalDisaRules { get; set; }  // Total DISA base rules
+        public int CoveredDisaRules { get; set; }  // DISA rules covered (automated + manual)
         public string LogFileStatus { get; set; } = string.Empty;
         public List<string> FailedRules { get; set; } = new();
         public List<string> SkippedRules { get; set; } = new();

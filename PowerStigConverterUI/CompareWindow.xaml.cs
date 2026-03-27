@@ -281,7 +281,12 @@ namespace PowerStigConverterUI
                 AddedListView.ItemsSource = result.AddedIds;
                 AddedCountTextBlock.Text = $"Added: {result.AddedIds.Count}";
 
-                InfoTextBlock.Text = $"Matched: {truelyMatched.Count}, Skipped: {skippedMatched.Count}, Missing: {result.MissingBaseIds.Count}, Added: {result.AddedIds.Count}";
+                // Calculate coverage: how many DISA base rules are covered
+                var totalDisaRules = truelyMatched.Count + skippedMatched.Count + result.MissingBaseIds.Count;
+                var coveredRules = truelyMatched.Count + skippedMatched.Count;
+                var coveragePercent = totalDisaRules > 0 ? (coveredRules * 100.0 / totalDisaRules) : 0;
+
+                InfoTextBlock.Text = $"Coverage: {coveredRules}/{totalDisaRules} DISA rules ({coveragePercent:F1}%) • Matched: {truelyMatched.Count}, Skipped: {skippedMatched.Count}, Missing: {result.MissingBaseIds.Count}, Added: {result.AddedIds.Count}";
             }
             catch (Exception ex)
             {

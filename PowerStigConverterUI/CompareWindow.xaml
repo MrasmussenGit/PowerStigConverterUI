@@ -192,7 +192,17 @@
             </Grid.ColumnDefinitions>
 
             <!-- Info text (left aligned) -->
-            <TextBlock x:Name="InfoTextBlock" Grid.Column="0" VerticalAlignment="Center" FontSize="12"/>
+            <!-- Info text (left aligned) - TextBox for copyable text -->
+            <TextBox x:Name="InfoTextBlock" 
+                     Grid.Column="0" 
+                     VerticalAlignment="Center" 
+                     FontSize="12"
+                     IsReadOnly="True"
+                     IsReadOnlyCaretVisible="False"
+                     Background="Transparent" 
+                     BorderThickness="0"
+                     Focusable="True"
+                     IsTabStop="False"/>
 
             <!-- Actions (right aligned) -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">

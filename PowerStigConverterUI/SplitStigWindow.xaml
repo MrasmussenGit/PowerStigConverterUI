@@ -22,12 +22,42 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- Advanced: Module selection (collapsed by default) -->
+        <Expander x:Name="ModuleExpander" Grid.Row="0" IsExpanded="False" Header="Advanced (PowerSTIG module)" Margin="0,0,0,8">
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Functions file:" Style="{StaticResource LabelTextStyle}"/>
+                <TextBox x:Name="ModulePathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,8,0" MinWidth="500" VerticalContentAlignment="Center"/>
+                <Button Grid.Row="0" Grid.Column="2" Content="Change..." Style="{StaticResource StandardButtonStyle}" Click="BrowseModule_Click"/>
+
+                <!-- Warning text (initially collapsed) -->
+                <TextBlock x:Name="ModuleWarningText" 
+                           Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" 
+                           Margin="0,8,0,0" 
+                           Foreground="#D32F2F" 
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"
+                           Visibility="Collapsed"
+                           Text="⚠ PowerSTIG Functions.XccdfXml.ps1 file not found. Please browse to the file location or install PowerSTIG module."/>
+            </Grid>
+        </Expander>
+
         <!-- Source file selection -->
-        <Grid Grid.Row="0" Margin="0,0,0,10">
+        <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" SharedSizeGroup="Label"/>
                 <ColumnDefinition Width="*"/>
@@ -39,7 +69,7 @@
         </Grid>
 
         <!-- Destination folder selection -->
-        <Grid Grid.Row="1" Margin="0,0,0,10">
+        <Grid Grid.Row="2" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" SharedSizeGroup="Label"/>
                 <ColumnDefinition Width="*"/>
@@ -51,13 +81,13 @@
         </Grid>
 
         <!-- Options -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,10">
             <CheckBox x:Name="OverwriteCheckBox" Content="Overwrite if files exist" IsChecked="True"/>
         </StackPanel>
 
         <!-- Output -->
         <RichTextBox x:Name="OutputRichTextBox"
-                     Grid.Row="3"
+                     Grid.Row="4"
                      Margin="0"
                      IsReadOnly="True"
                      VerticalScrollBarVisibility="Auto"
@@ -70,18 +100,27 @@
             </RichTextBox.Document>
         </RichTextBox>
 
-        <!-- Bottom bar: Status left, Actions right -->
-        <Grid Grid.Row="4" Margin="0,8,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <!-- Bottom bar: Status and Actions stacked vertically -->
+        <Grid Grid.Row="5" Margin="0,8,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-            <!-- Status text (left aligned) -->
-            <TextBlock x:Name="StatusText" Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            <!-- Status text (full width, top row) - TextBox for copyable text -->
+            <TextBox x:Name="StatusText" 
+                     Grid.Row="0" 
+                     IsReadOnly="True" 
+                     IsReadOnlyCaretVisible="False"
+                     Background="Transparent" 
+                     BorderThickness="0"
+                     TextWrapping="Wrap" 
+                     Margin="0,0,0,8"
+                     Focusable="True"
+                     IsTabStop="False"/>
 
-            <!-- Actions (right aligned) -->
-            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+            <!-- Actions (right aligned, bottom row) -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="SplitButton" Content="Split" Style="{StaticResource PrimaryButtonStyle}" Width="100" Margin="0,0,8,0" Click="SplitButton_Click"/>
                 <Button x:Name="CloseButton" Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="90" Click="CloseButton_Click"/>
             </StackPanel>

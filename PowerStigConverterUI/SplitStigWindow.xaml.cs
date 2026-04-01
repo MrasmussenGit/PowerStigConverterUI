@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -7,11 +8,15 @@ using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
 using Brushes = System.Windows.Media.Brushes;
+using Microsoft.Win32;
 
 namespace PowerStigConverterUI
 {
     public partial class SplitStigWindow : Window
     {
+        private const string LastFunctionsPathRegKey = @"Software\PowerStigConverterUI";
+        private const string LastFunctionsPathRegValue = "LastFunctionsPath";
+
         private static readonly Regex WindowsOsStigName = new(
             // Examples supported:
             // U_MS_Windows_Server_2022_STIG_V2R6_Manual-xccdf.xml
@@ -27,10 +32,218 @@ namespace PowerStigConverterUI
         public SplitStigWindow()
         {
             InitializeComponent();
+            this.Loaded += OnLoaded;
             this.Closing += SplitStigWindow_Closing;
 
             // Load persisted directory settings
             _lastDestinationDirectory = AppSettings.Instance.LastSplitDestinationDirectory;
+        }
+
+        private void OnLoaded(object? sender, RoutedEventArgs e)
+        {
+            // If already set (e.g., from previous run), keep it.
+            if (!string.IsNullOrWhiteSpace(ModulePathTextBox.Text) && File.Exists(ModulePathTextBox.Text))
+                return;
+
+            // Try registry (last successful path)
+            var last = ReadLastFunctionsPath();
+            if (!string.IsNullOrWhiteSpace(last) && File.Exists(last))
+            {
+                ModulePathTextBox.Text = last;
+                return;
+            }
+
+            // Discover typical locations
+            var discovered = FindPowerStigFunctionsFile();
+            if (!string.IsNullOrWhiteSpace(discovered))
+            {
+                ModulePathTextBox.Text = discovered!;
+                WriteLastFunctionsPath(discovered!);
+                return;
+            }
+
+            // Module not found - expand the Advanced section and show warning
+            ModuleExpander.IsExpanded = true;
+            ModuleWarningText.Visibility = Visibility.Visible;
+            ModulePathTextBox.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 235, 235)); // Light red background
+
+            // Alert user if not found
+            ModulePathTextBox.Text = string.Empty;
+            System.Windows.MessageBox.Show(
+                "Functions.XccdfXml.ps1 file was not found in standard PowerSTIG module locations.\\n\\n" +
+                "Please install PowerSTIG (Windows PowerShell 5.x) under:\\n" +
+                "  - %ProgramFiles%\\\\WindowsPowerShell\\\\Modules\\\\PowerSTIG\\n" +
+                "  - %UserProfile%\\\\Documents\\\\WindowsPowerShell\\\\Modules\\\\PowerSTIG\\n\\n" +
+                "Or browse to the Functions.XccdfXml.ps1 file using the Change… button.",
+                "PowerSTIG Functions file not found",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+
+        private static string? FindPowerStigFunctionsFile()
+        {
+            const string fileName = "Functions.XccdfXml.ps1";
+
+            // Known repo path under user profile (optional, non-hardcoded)
+            var repoCandidate = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "git", "PowerStig", "source", "Module", "Common", fileName);
+            if (File.Exists(repoCandidate)) return repoCandidate;
+
+            // Enumerate PSModulePath entries for PowerSTIG
+            var psModulePath = Environment.GetEnvironmentVariable("PSModulePath");
+            if (!string.IsNullOrWhiteSpace(psModulePath))
+            {
+                foreach (var dir in psModulePath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    try
+                    {
+                        // Newer installs: PowerSTIG\\<version>\\...
+                        var foundLatest =
+                            FindInLatestPowerStigVersion(Path.Combine(dir, "PowerSTIG"), fileName) ??
+                            FindInLatestPowerStigVersion(Path.Combine(dir, "PowerStig"), fileName);
+                        if (foundLatest is not null) return foundLatest;
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+
+            // Typical WindowsPowerShell module locations
+            var programFilesModules = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsPowerShell", "Modules");
+            var documentsModules = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "WindowsPowerShell", "Modules");
+
+            // Try PowerSTIG latest version under Program Files
+            var foundLatestPf =
+                FindInLatestPowerStigVersion(Path.Combine(programFilesModules, "PowerSTIG"), fileName) ??
+                FindInLatestPowerStigVersion(Path.Combine(programFilesModules, "PowerStig"), fileName);
+            if (foundLatestPf is not null) return foundLatestPf;
+
+            // Try PowerSTIG latest version under Documents
+            var foundLatestDocs =
+                FindInLatestPowerStigVersion(Path.Combine(documentsModules, "PowerSTIG"), fileName) ??
+                FindInLatestPowerStigVersion(Path.Combine(documentsModules, "PowerStig"), fileName);
+            if (foundLatestDocs is not null) return foundLatestDocs;
+
+            // Recursive search as last resort
+            var foundRecursive = FindFileRecursive(Path.Combine(programFilesModules, "PowerSTIG"), fileName) ??
+                                 FindFileRecursive(Path.Combine(programFilesModules, "PowerStig"), fileName);
+            if (foundRecursive is not null) return foundRecursive;
+
+            return null;
+        }
+
+        private static string? FindInLatestPowerStigVersion(string powerStigRoot, string fileName)
+        {
+            try
+            {
+                if (!Directory.Exists(powerStigRoot))
+                    return null;
+
+                var versionDirs = Directory.GetDirectories(powerStigRoot);
+                Array.Sort(versionDirs, (a, b) =>
+                {
+                    var va = ParseVersion(Path.GetFileName(a));
+                    var vb = ParseVersion(Path.GetFileName(b));
+                    return Comparer<Version>.Default.Compare(vb, va); // descending
+                });
+
+                foreach (var vdir in versionDirs)
+                {
+                    // Common layouts under PowerSTIG\\<version>\\...
+                    // 1) ...\\Module\\Common\\Functions.XccdfXml.ps1
+                    var underModuleCommon = Path.Combine(vdir, "Module", "Common", fileName);
+                    if (File.Exists(underModuleCommon)) return underModuleCommon;
+
+                    // 2) ...\\Common\\Functions.XccdfXml.ps1
+                    var underCommon = Path.Combine(vdir, "Common", fileName);
+                    if (File.Exists(underCommon)) return underCommon;
+
+                    // 3) Fallback: deep recursive search (handles uncommon layouts)
+                    var candidate = FindFileRecursive(vdir, fileName);
+                    if (candidate is not null)
+                        return candidate;
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
+        private static Version ParseVersion(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return new Version(0, 0, 0, 0);
+            if (Version.TryParse(s, out var v)) return v;
+            var digits = new string((s ?? "").Trim().Where(ch => char.IsDigit(ch) || ch == '.').ToArray());
+            return Version.TryParse(digits, out v) ? v : new Version(0, 0, 0, 0);
+        }
+
+        private static string? FindFileRecursive(string root, string fileName)
+        {
+            try
+            {
+                if (!Directory.Exists(root))
+                    return null;
+
+                var direct = Path.Combine(root, fileName);
+                if (File.Exists(direct)) return direct;
+
+                foreach (var dir in Directory.GetDirectories(root))
+                {
+                    var candidate = FindFileRecursive(dir, fileName);
+                    if (candidate is not null) return candidate;
+                }
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
+        private static string? ReadLastFunctionsPath()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(LastFunctionsPathRegKey);
+                return key?.GetValue(LastFunctionsPathRegValue) as string;
+            }
+            catch { return null; }
+        }
+
+        private static void WriteLastFunctionsPath(string path)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(LastFunctionsPathRegKey);
+                key?.SetValue(LastFunctionsPathRegValue, path);
+            }
+            catch { /* ignore */ }
+        }
+
+        private void BrowseModule_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select PowerSTIG Functions.XccdfXml.ps1 file",
+                Filter = "PowerShell Scripts (*.ps1)|*.ps1|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+
+            // Set initial directory to current module path directory if exists
+            if (!string.IsNullOrWhiteSpace(ModulePathTextBox.Text))
+            {
+                var dir = Path.GetDirectoryName(ModulePathTextBox.Text);
+                if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+                {
+                    dlg.InitialDirectory = dir;
+                }
+            }
+
+            if (dlg.ShowDialog(this) == true)
+            {
+                ModulePathTextBox.Text = dlg.FileName;
+                WriteLastFunctionsPath(dlg.FileName);
+
+                // Clear warning state
+                ModuleWarningText.Visibility = Visibility.Collapsed;
+                ModulePathTextBox.Background = System.Windows.Media.Brushes.White;
+            }
         }
 
         private void AppendOutput(string message, System.Windows.Media.Brush? foreground = null, System.Windows.Media.Brush? background = null)
@@ -205,28 +418,6 @@ namespace PowerStigConverterUI
                 return;
             }
 
-            var dir = Path.GetDirectoryName(src)!;
-            var nameNoExt = Path.GetFileNameWithoutExtension(src);
-
-            bool hasEditionToken = Regex.IsMatch(nameNoExt, @"_(MS|DC)_STIG_", RegexOptions.IgnoreCase);
-            if (hasEditionToken)
-            {
-                var result = System.Windows.MessageBox.Show(
-                    "The selected STIG filename already contains an edition token (MS/DC).\n" +
-                    "Proceeding will still produce one MS and one DC file based on the base name.\n\n" +
-                    "Do you want to continue?",
-                    "Edition token detected",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-
-                if (result != MessageBoxResult.Yes)
-                {
-                    StatusText.Text = "Split canceled by user.";
-                    CleanupTempExtraction();
-                    return;
-                }
-            }
-
             // For ZIP inputs, determine destination directory
             // Use user-specified destination, or if not set, use the directory where the ZIP file is located
             var destDirText = DestinationPathTextBox.Text?.Trim();
@@ -244,7 +435,7 @@ namespace PowerStigConverterUI
             else
             {
                 // Default to XCCDF's directory for direct XCCDF inputs
-                destDir = dir;
+                destDir = Path.GetDirectoryName(src)!;
             }
 
             if (!Directory.Exists(destDir))
@@ -257,34 +448,16 @@ namespace PowerStigConverterUI
 
             try
             {
+                string nameNoExt = Path.GetFileNameWithoutExtension(src);
                 string baseNameNoEdition = RemoveEditionToken(nameNoExt);
 
+                // Determine output file paths (what PowerSTIG will create)
                 var msName = InsertEditionToken(baseNameNoEdition, "MS") + ".xml";
                 var dcName = InsertEditionToken(baseNameNoEdition, "DC") + ".xml";
-
                 var msPath = Path.Combine(destDir, msName);
                 var dcPath = Path.Combine(destDir, dcName);
 
-                // Warn if target file names collide with source path (only relevant for non-ZIP inputs)
-                if (!isZipInput && (string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    var overwriteWarn = System.Windows.MessageBox.Show(
-                        "One of the output files matches the selected source filename.\n" +
-                        "To avoid overwriting, the copy will be skipped for the matching file.\n\n" +
-                        "Do you want to continue?",
-                        "Potential filename collision",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-
-                    if (overwriteWarn != MessageBoxResult.Yes)
-                    {
-                        StatusText.Text = "Split canceled by user.";
-                        CleanupTempExtraction();
-                        return;
-                    }
-                }
-
+                // Check if files exist and handle overwrite logic
                 var msExists = File.Exists(msPath);
                 var dcExists = File.Exists(dcPath);
                 var overwrite = OverwriteCheckBox.IsChecked == true;
@@ -310,27 +483,11 @@ namespace PowerStigConverterUI
                             CleanupTempExtraction();
                             return;
                         }
-
-                        overwrite = true; // proceed with overwriting after explicit consent
                     }
                 }
 
-                // Load source XML once
-                var xmlDoc = new System.Xml.XmlDocument();
-                xmlDoc.Load(src);
-
-                // Configure XML writer settings for proper formatting
-                var writerSettings = new System.Xml.XmlWriterSettings
-                {
-                    Indent = true,
-                    IndentChars = "  ", // 2 spaces
-                    NewLineChars = Environment.NewLine,
-                    NewLineHandling = System.Xml.NewLineHandling.Replace,
-                    Encoding = new System.Text.UTF8Encoding(false) // UTF-8 without BOM
-                };
-
                 // Header per run with timestamp
-                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started{Environment.NewLine}", Brushes.DarkBlue);
+                AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split started using PowerSTIG{Environment.NewLine}", Brushes.DarkBlue);
                 AppendOutput($"Source: {(isZipInput ? srcInput : src)}{Environment.NewLine}");
                 if (isZipInput)
                 {
@@ -338,35 +495,100 @@ namespace PowerStigConverterUI
                 }
                 AppendOutput($"Destination folder: {destDir}{Environment.NewLine}");
 
-                if (!isZipInput && string.Equals(src, msPath, StringComparison.OrdinalIgnoreCase))
+                // Verify module path is set and exists
+                var functionsFile = ModulePathTextBox.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(functionsFile) || !File.Exists(functionsFile))
                 {
-                    AppendOutput($"MS target: {msPath} (skipped; same as source){Environment.NewLine}", Brushes.DarkOrange);
-                }
-                else
-                {
-                    using (var writer = System.Xml.XmlWriter.Create(msPath, writerSettings))
-                    {
-                        xmlDoc.Save(writer);
-                    }
-                    AppendOutput($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}", msExists ? Brushes.DarkOrange : Brushes.DarkGreen);
+                    StatusText.Text = "Functions.XccdfXml.ps1 file not found. Please use the Advanced section to specify the file location.";
+                    AppendOutput($"Error: Functions.XccdfXml.ps1 file not found at: {functionsFile ?? "(not set)"}{Environment.NewLine}{Environment.NewLine}", Brushes.Red);
+                    CleanupTempExtraction();
+                    return;
                 }
 
-                if (!isZipInput && string.Equals(src, dcPath, StringComparison.OrdinalIgnoreCase))
+                AppendOutput($"PowerSTIG Functions file: {functionsFile}{Environment.NewLine}");
+
+                // Create a temporary PowerShell script file
+                var tempScript = Path.Combine(Path.GetTempPath(), $"PowerStigSplit_{Guid.NewGuid():N}.ps1");
+
+                var scriptContent = $@"
+param(
+    [string]$FunctionsFile,
+    [string]$XccdfPath,
+    [string]$Destination
+)
+$ErrorActionPreference = 'Stop'
+try {{
+    # Directly dot-source the Split-StigXccdf function file
+    if (-not (Test-Path $FunctionsFile)) {{
+        throw ""Functions file not found: $FunctionsFile""
+    }}
+
+    . $FunctionsFile
+    Write-Output ""Loaded Split-StigXccdf from: $FunctionsFile""
+
+    # Verify function is now available
+    if (-not (Get-Command Split-StigXccdf -ErrorAction SilentlyContinue)) {{
+        throw ""Split-StigXccdf function was not loaded successfully from $FunctionsFile""
+    }}
+
+    Split-StigXccdf -Path $XccdfPath -Destination $Destination
+    exit 0
+}} catch {{
+    Write-Error $_.Exception.Message
+    exit 1
+}}
+";
+                File.WriteAllText(tempScript, scriptContent, new System.Text.UTF8Encoding(false));
+
+                // Execute PowerShell command
+                StatusText.Text = "Splitting STIG using PowerSTIG cmdlet...";
+
+                var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" -FunctionsFile \"{functionsFile}\" -XccdfPath \"{src}\" -Destination \"{destDir}\"";
+
+                // Display the command being executed
+                AppendOutput($"{Environment.NewLine}Executing PowerShell command:{Environment.NewLine}", Brushes.DarkBlue);
+                AppendOutput($". '{functionsFile}'{Environment.NewLine}", Brushes.Black);
+                AppendOutput($"Split-StigXccdf -Path '{src}' -Destination '{destDir}'{Environment.NewLine}{Environment.NewLine}", Brushes.Black);
+
+                var psi = new System.Diagnostics.ProcessStartInfo
                 {
-                    AppendOutput($"DC target: {dcPath} (skipped; same as source){Environment.NewLine}", Brushes.DarkOrange);
-                }
-                else
+                    FileName = "powershell.exe",
+                    Arguments = psArgs,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(psi);
+                if (process == null)
                 {
-                    using (var writer = System.Xml.XmlWriter.Create(dcPath, writerSettings))
-                    {
-                        xmlDoc.Save(writer);
-                    }
-                    AppendOutput($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}", dcExists ? Brushes.DarkOrange : Brushes.DarkGreen);
+                    throw new InvalidOperationException("Failed to start PowerShell process");
                 }
 
-                // Handle log file copying
-                // For ZIP inputs, look for log file in the ZIP's directory (same as ZIP file)
-                // For direct XCCDF inputs, look for log file next to the XCCDF
+                var output = process.StandardOutput.ReadToEnd();
+                var error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                // Clean up temp script
+                try { File.Delete(tempScript); } catch { /* ignore */ }
+
+                if (process.ExitCode != 0)
+                {
+                    throw new Exception($"PowerShell execution failed with exit code {process.ExitCode}:\n{error}");
+                }
+
+                // Report output if any
+                if (!string.IsNullOrWhiteSpace(output))
+                {
+                    AppendOutput($"{output}{Environment.NewLine}", Brushes.Black);
+                }
+
+                // Report success
+                AppendOutput($"{(msExists ? "Overwritten" : "Created")}: {msPath}{Environment.NewLine}", msExists ? Brushes.DarkOrange : Brushes.DarkGreen);
+                AppendOutput($"{(dcExists ? "Overwritten" : "Created")}: {dcPath}{Environment.NewLine}", dcExists ? Brushes.DarkOrange : Brushes.DarkGreen);
+
+                // Handle log file copying (PowerSTIG doesn't copy log files, so we do it)
                 var logSearchPath = isZipInput ? srcInput : src;
                 var srcLog = Path.ChangeExtension(logSearchPath, ".log");
 
@@ -376,15 +598,15 @@ namespace PowerStigConverterUI
                     var dcLog = Path.ChangeExtension(dcPath, ".log");
 
                     var msLogExisted = File.Exists(msLog);
-                    File.Copy(srcLog, msLog, overwrite);
-                    AppendOutput($"{(msLogExisted && overwrite ? "Overwritten" : "Created")} log: {msLog}{Environment.NewLine}", msLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
+                    File.Copy(srcLog, msLog, true);
+                    AppendOutput($"{(msLogExisted ? "Overwritten" : "Created")} log: {msLog}{Environment.NewLine}", msLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
 
                     var dcLogExisted = File.Exists(dcLog);
-                    File.Copy(srcLog, dcLog, overwrite);
-                    AppendOutput($"{(dcLogExisted && overwrite ? "Overwritten" : "Created")} log: {dcLog}{Environment.NewLine}", dcLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
+                    File.Copy(srcLog, dcLog, true);
+                    AppendOutput($"{(dcLogExisted ? "Overwritten" : "Created")} log: {dcLog}{Environment.NewLine}", dcLogExisted ? Brushes.DarkOrange : Brushes.DarkGreen);
                 }
 
-                StatusText.Text = "Split completed.";
+                StatusText.Text = "Split completed successfully.";
                 AppendOutput($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Split completed{Environment.NewLine}{Environment.NewLine}", Brushes.DarkGreen);
             }
             catch (Exception ex)

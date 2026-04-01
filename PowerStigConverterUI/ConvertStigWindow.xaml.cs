@@ -63,6 +63,11 @@ namespace PowerStigConverterUI
                 return;
             }
 
+            // Module not found - expand the Advanced section and show warning
+            ModuleExpander.IsExpanded = true;
+            ModuleWarningText.Visibility = Visibility.Visible;
+            ModulePathTextBox.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 235, 235)); // Light red background
+
             // Alert user if not found
             ModulePathTextBox.Text = string.Empty;
             System.Windows.MessageBox.Show(
@@ -721,6 +726,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 File.WriteAllText(tempScript, scriptContent, new UTF8Encoding(false));
 
                 var psArgs = $"-NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File \"{tempScript}\" -Psm1 \"{modulePath}\" -XccdfPath \"{xccdfPath}\" -Destination \"{destination}\"";
+
+                // Display the PowerShell command being executed
+                AppendInfo($"{Environment.NewLine}Executing PowerShell command:", System.Windows.Media.Brushes.DarkBlue, null);
+                AppendInfo($"Import-Module -Force -Name '{modulePath}'", System.Windows.Media.Brushes.Black, null);
+                AppendInfo($"ConvertTo-PowerStigXml -Path '{xccdfPath}' -Destination '{destination}' -CreateOrgSettingsFile:${(createOrgSettings ? "true" : "false")}{Environment.NewLine}", System.Windows.Media.Brushes.Black, null);
 
                 var psi = new ProcessStartInfo
                 {
@@ -1797,6 +1807,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             {
                 ModulePathTextBox.Text = openFileDialog.FileName;
                 WriteLastModulePath(openFileDialog.FileName);
+
+                // Clear warning state
+                ModuleWarningText.Visibility = Visibility.Collapsed;
+                ModulePathTextBox.Background = System.Windows.Media.Brushes.White;
             }
         }
 

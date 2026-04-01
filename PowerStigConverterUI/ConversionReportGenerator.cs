@@ -123,13 +123,16 @@ namespace PowerStigConverterUI
             const tabButtons = button.parentElement;
             const tabsContainer = tabButtons.parentElement;
 
-            // Deactivate all buttons and contents in this rule
+            // Deactivate all buttons and contents in this rule's tabs container
             tabButtons.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
             tabsContainer.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
             // Activate clicked button and corresponding content
             button.classList.add('active');
-            document.getElementById(tabId).classList.add('active');
+            const tabContent = document.getElementById(tabId);
+            if (tabContent) {{
+                tabContent.classList.add('active');
+            }}
         }}
         
         function jumpToSection(sectionId) {{
@@ -273,29 +276,32 @@ namespace PowerStigConverterUI
                         </div>
                         {(hasDetail ? @"<span>▼</span>" : "")}
                     </div>
-                    {(hasDetail ? GenerateRuleDetails(detail!, ruleId) : "")}
+                    {(hasDetail ? GenerateRuleDetails(detail!, ruleId, id) : "")}
                 </div>";
             }))}
             </div>
         </div>";
         }
 
-        private static string GenerateRuleDetails(RuleDetail detail, string ruleId)
+        private static string GenerateRuleDetails(RuleDetail detail, string ruleId, string sectionId)
         {
+            // Create unique tab IDs by prefixing with section ID to avoid conflicts between sections
+            var tabPrefix = $"{sectionId}-{EscapeHtml(ruleId)}";
+
             return $@"
                     <div class=""rule-details"">
                         {(detail.ErrorMessage != null ? $@"<div class=""error-message"">{EscapeHtml(detail.ErrorMessage)}</div>" : "")}
-                        
+
                         <div class=""tabs"">
                             <div class=""tab-buttons"">
-                                <button class=""tab-button active"" onclick=""switchTab(event, '{EscapeHtml(ruleId)}-overview')"">Overview</button>
-                                {(!string.IsNullOrWhiteSpace(detail.Description) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{EscapeHtml(ruleId)}-description')"">Description</button>" : "")}
-                                {(!string.IsNullOrWhiteSpace(detail.FixText) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{EscapeHtml(ruleId)}-fix')"">Fix</button>" : "")}
-                                {(!string.IsNullOrWhiteSpace(detail.CheckText) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{EscapeHtml(ruleId)}-check')"">Check</button>" : "")}
-                                {(!string.IsNullOrWhiteSpace(detail.ConvertedSnippet) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{EscapeHtml(ruleId)}-converted')"">Converted</button>" : "")}
+                                <button class=""tab-button active"" onclick=""switchTab(event, '{tabPrefix}-overview')"">Overview</button>
+                                {(!string.IsNullOrWhiteSpace(detail.Description) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{tabPrefix}-description')"">Description</button>" : "")}
+                                {(!string.IsNullOrWhiteSpace(detail.FixText) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{tabPrefix}-fix')"">Fix</button>" : "")}
+                                {(!string.IsNullOrWhiteSpace(detail.CheckText) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{tabPrefix}-check')"">Check</button>" : "")}
+                                {(!string.IsNullOrWhiteSpace(detail.ConvertedSnippet) ? $@"<button class=""tab-button"" onclick=""switchTab(event, '{tabPrefix}-converted')"">Converted</button>" : "")}
                             </div>
-                            
-                            <div class=""tab-content active"" id=""{EscapeHtml(ruleId)}-overview"">
+
+                            <div class=""tab-content active"" id=""{tabPrefix}-overview"">
                                 {(!string.IsNullOrWhiteSpace(detail.SvId) ? $@"<div class=""detail-row""><span class=""detail-label"">SV ID:</span><span class=""detail-value"">{EscapeHtml(detail.SvId)}</span></div>" : "")}
                                 {(!string.IsNullOrWhiteSpace(detail.Severity) ? $@"<div class=""detail-row""><span class=""detail-label"">Severity:</span><span class=""detail-value severity-{detail.Severity?.ToLower()}"">{EscapeHtml(detail.Severity)}</span></div>" : "")}
                                 {(!string.IsNullOrWhiteSpace(detail.Title) ? $@"<div class=""detail-row""><span class=""detail-label"">Title:</span><div class=""detail-text"">{EscapeHtml(detail.Title)}</div></div>" : "")}
@@ -306,24 +312,24 @@ namespace PowerStigConverterUI
                                 </div>" : "")}
                                 {(!string.IsNullOrWhiteSpace(detail.DscResource) ? $@"<div class=""detail-row""><span class=""detail-label"">DSC Resource:</span><span class=""detail-value"">{EscapeHtml(detail.DscResource)}</span></div>" : "")}
                             </div>
-                            
+
                             {(!string.IsNullOrWhiteSpace(detail.Description) ? $@"
-                            <div class=""tab-content"" id=""{EscapeHtml(ruleId)}-description"">
+                            <div class=""tab-content"" id=""{tabPrefix}-description"">
                                 <pre class=""detail-text-block"">{EscapeHtml(detail.Description)}</pre>
                             </div>" : "")}
-                            
+
                             {(!string.IsNullOrWhiteSpace(detail.FixText) ? $@"
-                            <div class=""tab-content"" id=""{EscapeHtml(ruleId)}-fix"">
+                            <div class=""tab-content"" id=""{tabPrefix}-fix"">
                                 <pre class=""detail-text-block"">{EscapeHtml(detail.FixText)}</pre>
                             </div>" : "")}
-                            
+
                             {(!string.IsNullOrWhiteSpace(detail.CheckText) ? $@"
-                            <div class=""tab-content"" id=""{EscapeHtml(ruleId)}-check"">
+                            <div class=""tab-content"" id=""{tabPrefix}-check"">
                                 <pre class=""detail-text-block"">{EscapeHtml(detail.CheckText)}</pre>
                             </div>" : "")}
-                            
+
                             {(!string.IsNullOrWhiteSpace(detail.ConvertedSnippet) ? $@"
-                            <div class=""tab-content"" id=""{EscapeHtml(ruleId)}-converted"">
+                            <div class=""tab-content"" id=""{tabPrefix}-converted"">
                                 <pre class=""detail-text-block code-block"">{EscapeHtml(detail.ConvertedSnippet)}</pre>
                             </div>" : "")}
                         </div>

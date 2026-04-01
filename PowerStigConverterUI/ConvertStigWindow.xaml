@@ -27,16 +27,31 @@
         </Grid.RowDefinitions>
 
         <!-- Advanced: Module selection de-emphasized (moved above Input and Output) -->
-        <Expander Grid.Row="0" IsExpanded="False" Header="Advanced (PowerStig module)" Margin="0,0,0,8">
+        <Expander x:Name="ModuleExpander" Grid.Row="0" IsExpanded="False" Header="Advanced (PowerStig module)" Margin="0,0,0,8">
             <Grid Margin="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Module path:" Style="{StaticResource LabelTextStyle}"/>
-                <TextBox x:Name="ModulePathTextBox" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
-                <Button Grid.Column="2" Content="Change..." Style="{StaticResource StandardButtonStyle}" Click="BrowseModule_Click"/>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0" Text="Module path:" Style="{StaticResource LabelTextStyle}"/>
+                <TextBox x:Name="ModulePathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,8,0" MinWidth="500"/>
+                <Button Grid.Row="0" Grid.Column="2" Content="Change..." Style="{StaticResource StandardButtonStyle}" Click="BrowseModule_Click"/>
+
+                <!-- Warning text (initially collapsed) -->
+                <TextBlock x:Name="ModuleWarningText" 
+                           Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" 
+                           Margin="0,8,0,0" 
+                           Foreground="#D32F2F" 
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"
+                           Visibility="Collapsed"
+                           Text="⚠ PowerStig.Convert module not found. Please browse to the module file or install PowerSTIG and PowerStig.Convert modules."/>
             </Grid>
         </Expander>
 

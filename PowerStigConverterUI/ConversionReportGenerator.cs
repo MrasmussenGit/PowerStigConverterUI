@@ -121,12 +121,12 @@ namespace PowerStigConverterUI
             event.stopPropagation();
             const button = event.target;
             const tabButtons = button.parentElement;
-            const tabs = tabButtons.parentElement;
-            
+            const tabsContainer = tabButtons.parentElement;
+
             // Deactivate all buttons and contents in this rule
             tabButtons.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-            tabs.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
+            tabsContainer.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
             // Activate clicked button and corresponding content
             button.classList.add('active');
             document.getElementById(tabId).classList.add('active');

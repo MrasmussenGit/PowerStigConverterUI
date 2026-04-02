@@ -30,6 +30,9 @@ namespace PowerStigConverterUI
         private readonly System.Collections.Generic.HashSet<string> _skippedRuleIds =
     new(System.StringComparer.OrdinalIgnoreCase);
         private string? _lastReportPath;
+
+        // Track if we're in an automatic rerun to avoid infinite loops
+        private bool _isAutoRerun = false;
         public ConvertStigWindow()
         {
             InitializeComponent();
@@ -571,7 +574,18 @@ namespace PowerStigConverterUI
 
         private async void ConvertButton_Click(object sender, RoutedEventArgs e)
         {
-            InfoRichTextBox.Document.Blocks.Clear();
+            // Show status message if this is an automatic rerun
+            if (_isAutoRerun)
+            {
+                AppendInfo($"{Environment.NewLine}=== Automatic Rerun Started ==={Environment.NewLine}", 
+                    System.Windows.Media.Brushes.DarkOrange, System.Windows.Media.Brushes.LightYellow);
+            }
+            else
+            {
+                // Only clear on manual conversion start (not on auto-rerun)
+                InfoRichTextBox.Document.Blocks.Clear();
+            }
+
             _failedRuleIds.Clear();
             _failedRuleErrors.Clear();
             _skippedRuleIds.Clear();
@@ -1237,16 +1251,99 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 {
                     AppendInfo($"Warning: Failed to generate report: {reportEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
                 }
+
+                // Handle rerun logic based on failures and log file status
+                var autoRerunEnabled = AutoRerunOnFailureCheckBox?.IsChecked == true;
+
                 if (!logFileExistedBefore && logFileWasWritten)
                 {
-                    System.Windows.MessageBox.Show(
-                        $"Conversion complete with {normalizedFailedIds.Count} error(s).\n\n" +
-                        "A log file was created to skip these failures.\n" +
-                        "Run the conversion again to get a clean output without these errors.",
-                        "Log File Created - Rerun Recommended",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
+                    // A log file was just created due to failures
+                    if (_isAutoRerun)
+                    {
+                        // We're already in a rerun and still got failures - stop and alert
+                        AppendInfo($"Still encountered {normalizedFailedIds.Count} error(s) after automatic rerun. Manual intervention required.", 
+                            System.Windows.Media.Brushes.OrangeRed, null);
+                        System.Windows.MessageBox.Show(
+                            $"Conversion encountered {normalizedFailedIds.Count} error(s) even after automatic rerun.\n\n" +
+                            "These failures require manual intervention. Review the conversion report for details.",
+                            "Rerun Failed - Manual Intervention Required",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+                    else if (autoRerunEnabled)
+                    {
+                        // Auto-rerun is enabled and this is the first run - automatically rerun
+                        AppendInfo($"Log file created with {normalizedFailedIds.Count} failed rule(s). Auto-rerunning conversion...", 
+                            System.Windows.Media.Brushes.DarkOrange, null);
+
+                        // Mark that we're in a rerun to prevent loops
+                        _isAutoRerun = true;
+
+                        // Re-trigger conversion asynchronously
+                        Dispatcher.InvokeAsync(async () =>
+                        {
+                            await System.Threading.Tasks.Task.Delay(500); // Brief delay for UI update
+                            ConvertButton_Click(sender, e);
+                        });
+                        return; // Exit current execution, let the rerun complete
+                    }
+                    else
+                    {
+                        // Auto-rerun is disabled - show the message box
+                        System.Windows.MessageBox.Show(
+                            $"Conversion complete with {normalizedFailedIds.Count} error(s).\n\n" +
+                            "A log file was created to skip these failures.\n" +
+                            "Run the conversion again to get a clean output without these errors.",
+                            "Log File Created - Rerun Recommended",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+                    }
                 }
+                else if (normalizedFailedIds.Count > 0 && !logFileWasWritten && addFailedRulesToLog)
+                {
+                    // Failures occurred but no log file was written (likely because log path is invalid or write failed)
+                    // Alert user that rerunning won't help
+                    if (_isAutoRerun)
+                    {
+                        AppendInfo($"Still encountered {normalizedFailedIds.Count} error(s) after rerun, and no log file exists. Cannot auto-skip failures.", 
+                            System.Windows.Media.Brushes.OrangeRed, null);
+                        System.Windows.MessageBox.Show(
+                            $"Conversion still has {normalizedFailedIds.Count} error(s) and no log file was created.\n\n" +
+                            "Rerunning will not help as there are no rules to skip.\n" +
+                            "Review the errors and fix the underlying issues.",
+                            "Rerun Not Recommended - No Log File",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        AppendInfo($"Encountered {normalizedFailedIds.Count} error(s), but no log file was created.", 
+                            System.Windows.Media.Brushes.OrangeRed, null);
+
+                        var result = System.Windows.MessageBox.Show(
+                            $"Conversion has {normalizedFailedIds.Count} error(s), but no log file was created.\n\n" +
+                            "Rerunning will likely produce the same errors since there are no rules to skip.\n\n" +
+                            "Do you want to rerun anyway?",
+                            "No Log File - Rerun Not Recommended",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Warning);
+
+                        if (result == MessageBoxResult.Yes)
+                        {
+                            _isAutoRerun = true;
+                            Dispatcher.InvokeAsync(async () =>
+                            {
+                                await System.Threading.Tasks.Task.Delay(500);
+                                ConvertButton_Click(sender, e);
+                            });
+                            return;
+                        }
+                    }
+                }
+
+                // Reset rerun flag on successful completion (no failures or second run complete)
+                _isAutoRerun = false;
+
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
                 InfoRichTextBox.ScrollToHome();
             }

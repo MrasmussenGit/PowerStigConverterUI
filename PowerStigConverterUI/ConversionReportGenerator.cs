@@ -26,7 +26,7 @@ namespace PowerStigConverterUI
         /* Summary Cards */
         .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0; }}
         .summary-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }}
-        .summary-card {{ padding: 20px; border-radius: 8px; border-left: 4px solid; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }}
+        .summary-card {{ padding: 20px; border-radius: 8px; border-left: 4px solid; text-align: center; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }}
         .summary-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }}
         .summary-card[style*=""cursor: default""] {{ cursor: default !important; }}
         .summary-card[style*=""cursor: default""]:hover {{ transform: none; box-shadow: none; }}
@@ -169,75 +169,94 @@ namespace PowerStigConverterUI
         {(data.TotalDisaRules > 0 ? $@"
         <div class=""summary-row"">
             <div class=""summary-card-large {(data.CoveredDisaRules == data.TotalDisaRules ? "success" : data.CoveredDisaRules >= data.TotalDisaRules * 0.8 ? "warning" : "error")}"" style=""cursor: default;"">
-                <div class=""summary-card-number"">{data.CoveredDisaRules}/{data.TotalDisaRules}</div>
-                <div class=""summary-card-label"">DISA STIG Rules Covered ({(data.TotalDisaRules > 0 ? (data.CoveredDisaRules * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
-                <div style=""font-size: 0.85em; color: #666; margin-top: 10px;"">
-                    {data.IndividualDISARulesAutomated} automated + {data.NoDscResourceRules.Count + data.HardCodedRules.Count} manual
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.5em; font-weight: 600; color: #333; margin-bottom: 8px;"">
+                        {data.TotalDisaRules} Total Rules in Current STIG
+                    </div>
+                    <div style=""font-size: 1.5em; font-weight: 600; color: #333; margin-bottom: 12px;"">
+                        {data.CoveredDisaRules} Successfully Converted ({(data.TotalDisaRules > 0 ? (data.CoveredDisaRules * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)
+                    </div>
+                    <div style=""font-size: 0.9em; color: #666; margin-top: 5px;"">
+                        {data.IndividualDISARulesAutomated} Automated - No user intervention
+                    </div>
+                    <div style=""font-size: 0.9em; color: #666; margin-top: 5px;"">
+                        {data.NoDscResourceRules.Count + data.HardCodedRules.Count} Manual - User intervention required
+                    </div>
                 </div>
             </div>
             <div class=""summary-card-large {(data.FailedCount + data.SkippedRules.Count == 0 ? "success" : "error")}"" onclick=""{(data.FailedCount > 0 ? "jumpToSection('failed-section')" : data.SkippedRules.Count > 0 ? "jumpToSection('skipped-section')" : "")}"" style=""{(data.FailedCount + data.SkippedRules.Count == 0 ? "cursor: default;" : "")}"">
-                <div class=""summary-card-number"">{data.FailedCount + data.SkippedRules.Count}</div>
-                <div class=""summary-card-label"">Missing DISA Rules</div>
-                <div style=""font-size: 0.85em; color: #666; margin-top: 10px;"">
-                    {(data.FailedCount > 0 && data.SkippedRules.Count > 0 ? $"{data.FailedCount} failed + {data.SkippedRules.Count} skipped" : 
-                      data.FailedCount > 0 ? $"{data.FailedCount} failed conversions" :
-                      data.SkippedRules.Count > 0 ? $"{data.SkippedRules.Count} skipped (from log file)" :
-                      "All rules converted!")}
-                </div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 8px; font-style: italic;"">
-                    {(data.FailedCount + data.SkippedRules.Count > 0 ? "Click to view details below" : "Not counted in coverage above")}
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.5em; font-weight: 600; color: #333; margin-bottom: 8px;"">{data.FailedCount + data.SkippedRules.Count} Missing DISA Rules ({(data.TotalDisaRules > 0 ? ((data.FailedCount + data.SkippedRules.Count) * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
+                    <div style=""font-size: 0.9em; color: #666; margin-top: 10px;"">
+                        {(data.FailedCount > 0 && data.SkippedRules.Count > 0 ? $"{data.FailedCount} Failed + {data.SkippedRules.Count} Skipped" : 
+                          data.FailedCount > 0 ? $"{data.FailedCount} Failed conversions" :
+                          data.SkippedRules.Count > 0 ? $"{data.SkippedRules.Count} Skipped (from log file)" :
+                          "All rules converted!")}
+                    </div>
+                    <div style=""font-size: 0.8em; color: #999; margin-top: 8px; font-style: italic;"">
+                        {(data.FailedCount + data.SkippedRules.Count > 0 ? "Click to view details below" : "Not counted in coverage above")}
+                    </div>
                 </div>
             </div>
         </div>" : "")}
 
         <div class=""summary"">
             <div class=""summary-card success"" onclick=""jumpToSection('success-section')"">
-                <div class=""summary-card-number"">{data.SuccessfulRules.Count}</div>
-                <div class=""summary-card-label"">Automated Rules (Including Variants)</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
-            </div>
-            <!-- Non-clickable stat display -->
-            <div class=""summary-card info"" style=""cursor: default; opacity: 0.9;"">
-                <div class=""summary-card-number"">{data.TotalRulesCreated}</div>
-                <div class=""summary-card-label"">Total Rules Created (Including Manual)</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
-                    {data.SuccessfulRules.Count} automated + {data.NoDscResourceRules.Count + data.HardCodedRules.Count} manual
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.IndividualDISARulesAutomated} Automated rules ({(data.TotalDisaRules > 0 ? (data.IndividualDISARulesAutomated * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
+                    <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">{data.SuccessfulRules.Count} Rules created which includes variants</div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
                 </div>
             </div>
+            {((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 ? $@"
+            <div class=""summary-card warning"" onclick=""jumpToSection('nodsc-section')"">
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.NoDscResourceRules.Count + data.HardCodedRules.Count} Manual Intervention Required ({(data.TotalDisaRules > 0 ? ((data.NoDscResourceRules.Count + data.HardCodedRules.Count) * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
+                    <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">
+                        {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
+                        {(data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")}
+                    </div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
+                </div>
+            </div>" : "")}
         </div>
 
         <!-- Breakdown cards - REGULAR SIZE -->
-        {((data.NoDscResourceRules.Count + data.SkippedRules.Count + data.HardCodedRules.Count + data.FailedCount) > 0 ? $@"
+        {((data.SuccessfulRules.Count - data.IndividualDISARulesAutomated > 0 || data.SkippedRules.Count > 0 || data.FailedCount > 0) ? $@"
         <div class=""summary"">
-            {((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 ? $@"
-            <div class=""summary-card warning"" onclick=""jumpToSection('nodsc-section')"">
-                <div class=""summary-card-number"">{data.NoDscResourceRules.Count + data.HardCodedRules.Count}</div>
-                <div class=""summary-card-label"">Rules Requiring Manual Intervention</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
-                    {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
-                    {(data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")}
-                    <br/>Click to view details
+            <!-- Non-clickable stat display -->
+            <div class=""summary-card info"" style=""cursor: default; opacity: 0.9;"">
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.SuccessfulRules.Count - data.IndividualDISARulesAutomated} Variant Rules Created</div>
+                    <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">From {data.IndividualDISARulesAutomated} base rules</div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">
+                        {data.SuccessfulRules.Count} Total automated rules including variants
+                    </div>
                 </div>
-            </div>" : "")}
+            </div>
             {(data.SkippedRules.Count > 0 ? $@"
             <div class=""summary-card info"" onclick=""jumpToSection('skipped-section')"">
-                <div class=""summary-card-number"">{data.SkippedRules.Count}</div>
-                <div class=""summary-card-label"">Rules Skipped (Not Created)</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">From skip log file • Click to view details</div>
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.SkippedRules.Count} Rules Skipped</div>
+                    <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">Not Created</div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">From skip log file • Click to view details</div>
+                </div>
             </div>" : "")}
             {(data.FailedCount > 0 ? $@"
             <div class=""summary-card error"" onclick=""jumpToSection('failed-section')"">
-                <div class=""summary-card-number"">{data.FailedCount}</div>
-                <div class=""summary-card-label"">Failed Conversions</div>
-                <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Rerun conversion to skip these failures • Click to view details</div>
+                <div style=""display: inline-block; text-align: left;"">
+                    <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.FailedCount} Failed Conversions</div>
+                    <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">Rerun conversion to skip these failures</div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
+                </div>
             </div>" : "")}
         </div>" : "")}
 
             {GenerateSection("failed", "Failed Rule Conversions", data.FailedRules, data.FailedRuleDetails, "error")}
-            {GenerateSection("nodsc", "Rules with No DSC Resource", data.NoDscResourceRules, data.NoDscRuleDetails, "warning")}
-            {GenerateSection("skipped", "Skipped Rules", data.SkippedRules, data.SkippedRuleDetails, "warning")}
-            {GenerateSection("hardcoded", "Hard Coded Rules", data.HardCodedRules, data.HardCodedRuleDetails, "info")}
-            {GenerateSection("success", "Successfully Converted Rules", data.SuccessfulRules, data.SuccessfulRuleDetails, "success")}
+            {GenerateSection("nodsc", "Rules with No DSC Resource<br/><span style=\"font-size: 0.75em; font-weight: normal; color: #666;\">Requires Manual Intervention</span>", data.NoDscResourceRules, data.NoDscRuleDetails, "warning")}
+            {GenerateSection("skipped", "Skipped Rules<br/><span style=\"font-size: 0.75em; font-weight: normal; color: #666;\">Requires Manual Intervention - Not Included in Converted Output</span>", data.SkippedRules, data.SkippedRuleDetails, "warning")}
+            {GenerateSection("hardcoded", "Hard Coded Rules<br/><span style=\"font-size: 0.75em; font-weight: normal; color: #666;\">Requires Manual Intervention</span>", data.HardCodedRules, data.HardCodedRuleDetails, "info")}
+            {GenerateSection("success", "Successfully Converted Rules<br/><span style=\"font-size: 0.75em; font-weight: normal; color: #666;\">Automated, No User Intervention</span>", data.SuccessfulRules, data.SuccessfulRuleDetails, "success")}
     </div>
 </body>
 </html>";
@@ -253,7 +272,7 @@ namespace PowerStigConverterUI
             return $@"
         <div class=""section"">
             <div class=""section-header {styleClass}"" onclick=""toggleSection(this)"">
-                <div class=""section-title"">{EscapeHtml(title)}</div>
+                <div class=""section-title"">{title}</div>
                 <div>
                     <span class=""section-count"">{rules.Count}</span>
                     <span class=""toggle-icon"">▶</span>

@@ -637,9 +637,19 @@ namespace PowerStigConverterUI
             {
                 var (skips, hardCoded) = ParseLogFile(logPath!);
                 foreach (var skip in skips)
-                    _skippedRuleIds.Add(skip);
+                {
+                    // Normalize skip IDs to base form (V-123456.a → V-123456)
+                    var normalized = NormalizeVId(skip.Trim());
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        _skippedRuleIds.Add(normalized);
+                }
                 foreach (var hc in hardCoded)
-                    hardCodedRuleIds.Add(hc);
+                {
+                    // Normalize hard coded IDs to base form (V-123456.a → V-123456)
+                    var normalized = NormalizeVId(hc.Trim());
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        hardCodedRuleIds.Add(normalized);
+                }
 
                 if (_skippedRuleIds.Count > 0 || hardCodedRuleIds.Count > 0)
                 {

@@ -84,7 +84,8 @@
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
             <CheckBox x:Name="CreateOrgSettingsCheckBox" Content="Create org settings file" IsChecked="True" Margin="0,0,12,0"/>
             <CheckBox x:Name="SkipCompareCheckBox" Content="Skip compare step" Margin="0,0,12,0"/>
-            <CheckBox x:Name="AddFailedRulesToLogCheckBox" Content="Add failed rules to log file" IsChecked="True"/>
+            <CheckBox x:Name="AddFailedRulesToLogCheckBox" Content="Add failed rules to log file" IsChecked="True" Margin="0,0,12,0"/>
+            <CheckBox x:Name="AutoRerunOnFailureCheckBox" Content="Auto-rerun on conversion failures" IsChecked="True"/>
         </StackPanel>
 
         <!-- Info / Logs -->

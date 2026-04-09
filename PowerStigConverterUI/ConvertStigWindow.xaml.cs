@@ -1345,7 +1345,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 _isAutoRerun = false;
 
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
-                InfoRichTextBox.ScrollToHome();
+                InfoRichTextBox.ScrollToEnd();
             }
             catch (Exception ex)
             {
@@ -1576,9 +1576,10 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
             }
 
             // 16) Windows Defender Antivirus => WindowsDefender-All-x.y.xml
-            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
-                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
-                tokens[2].Equals("Defender", StringComparison.OrdinalIgnoreCase))
+            // Handles both "MS_Windows_Defender" and "MS_Defender_Antivirus" patterns
+            if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                (tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase) || 
+                 (tokens.Contains("Windows", StringComparer.OrdinalIgnoreCase) && tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase))))
             {
                 return $"WindowsDefender-All-{verShort}.xml";
             }
@@ -1608,7 +1609,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
                 tokens.Any(t => t.Equals("Server", StringComparison.OrdinalIgnoreCase)))
             {
-                var year = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2012R2|2016|2019|2022)$", RegexOptions.IgnoreCase)) ?? "2016";
+                var year = tokens.FirstOrDefault(t => Regex.IsMatch(t, @"^(2012R2|2016|2019|2022|2025)$", RegexOptions.IgnoreCase)) ?? "2016";
                 string? edition = null;
                 if (name.IndexOf("_MS_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "MS";
                 else if (name.IndexOf("_DC_STIG_", StringComparison.OrdinalIgnoreCase) >= 0) edition = "DC";

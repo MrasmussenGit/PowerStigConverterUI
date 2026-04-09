@@ -888,6 +888,35 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                 var convertedFilePath = resolvedPath;
 
+                // Check if converted file exists (PowerSTIG might not support the product or no rules were converted)
+                if (!File.Exists(convertedFilePath))
+                {
+                    AppendInfo($"PowerSTIG did not generate a converted output file.", System.Windows.Media.Brushes.OrangeRed, null);
+                    AppendInfo($"This may indicate that PowerSTIG doesn't support this product yet, or all rules require manual implementation.", 
+                        System.Windows.Media.Brushes.DarkOrange, null);
+                    AppendInfo($"Expected output file: {convertedFilePath}", System.Windows.Media.Brushes.Gray, null);
+
+                    // Check if any XML files were created in the destination
+                    var xmlFiles = Directory.GetFiles(destination!, "*.xml", SearchOption.TopDirectoryOnly)
+                        .Where(f => !f.EndsWith(".org.default.xml", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (xmlFiles.Any())
+                    {
+                        AppendInfo($"However, found {xmlFiles.Count} XML file(s) in destination folder:", System.Windows.Media.Brushes.DarkOrange, null);
+                        foreach (var f in xmlFiles)
+                        {
+                            AppendInfo($"  - {Path.GetFileName(f)}", System.Windows.Media.Brushes.DarkOrange, null);
+                        }
+                        AppendInfo("These files may have different names than expected. Check the GetConvertedFileName method if needed.", 
+                            System.Windows.Media.Brushes.DarkOrange, null);
+                    }
+
+                    AppendInfo("Conversion completed with no output file.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                    InfoRichTextBox.ScrollToEnd();
+                    return; // Exit early
+                }
+
                 // Collect all IDs from converted output
                 var convertedIds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var id in ExtractRuleIdsFromConverted(convertedFilePath))
@@ -1097,26 +1126,37 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 var skipCompare = SkipCompareCheckBox?.IsChecked == true;
                 if (!skipCompare)
                 {
-                    AppendInfo($"Comparing newly converted output against the original XCCDF for missing rules during conversion (this may take a moment)…{Environment.NewLine}Converted file: {convertedFilePath}",
-                        System.Windows.Media.Brushes.DarkSlateBlue, null);
-
-                    var missing = CompareRuleIds(xccdfPath!, convertedFilePath);
-                    if (missing.Count > 0)
+                    // Check if converted file exists before comparing
+                    if (!File.Exists(convertedFilePath))
                     {
-                        AppendInfo($"Missing rule IDs ({missing.Count}) — present in XCCDF but not in converted output:", System.Windows.Media.Brushes.Firebrick, null);
-                        foreach (var mid in missing
-                            .Select(id => id.Trim())
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .OrderBy(id => ExtractNumericKey(id, prefix: id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase) ? "SV-" :
-                                                   id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
-                            .ThenBy(id => id, StringComparer.OrdinalIgnoreCase))
-                        {
-                            AppendInfo($" - {mid}", System.Windows.Media.Brushes.Firebrick, null);
-                        }
+                        AppendInfo($"Skipping compare step: Converted file not found. PowerSTIG may not support this product or no rules were converted.",
+                            System.Windows.Media.Brushes.DarkOrange, null);
+                        AppendInfo($"Expected file: {convertedFilePath}",
+                            System.Windows.Media.Brushes.DarkOrange, null);
                     }
                     else
                     {
-                        AppendInfo("No missing rule IDs detected.", System.Windows.Media.Brushes.DarkGreen, null);
+                        AppendInfo($"Comparing newly converted output against the original XCCDF for missing rules during conversion (this may take a moment)…{Environment.NewLine}Converted file: {convertedFilePath}",
+                            System.Windows.Media.Brushes.DarkSlateBlue, null);
+
+                        var missing = CompareRuleIds(xccdfPath!, convertedFilePath);
+                        if (missing.Count > 0)
+                        {
+                            AppendInfo($"Missing rule IDs ({missing.Count}) — present in XCCDF but not in converted output:", System.Windows.Media.Brushes.Firebrick, null);
+                            foreach (var mid in missing
+                                .Select(id => id.Trim())
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(id => ExtractNumericKey(id, prefix: id.StartsWith("SV-", StringComparison.OrdinalIgnoreCase) ? "SV-" :
+                                                       id.StartsWith("V-", StringComparison.OrdinalIgnoreCase) ? "V-" : string.Empty))
+                                .ThenBy(id => id, StringComparer.OrdinalIgnoreCase))
+                            {
+                                AppendInfo($" - {mid}", System.Windows.Media.Brushes.Firebrick, null);
+                            }
+                        }
+                        else
+                        {
+                            AppendInfo("No missing rule IDs detected.", System.Windows.Media.Brushes.DarkGreen, null);
+                        }
                     }
                 }
 
@@ -1575,21 +1615,31 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 return $"WindowsClient-{major}-{verShort}.xml";
             }
 
-            // 16) Windows Defender Antivirus => WindowsDefender-All-x.y.xml
-            // Handles both "MS_Windows_Defender" and "MS_Defender_Antivirus" patterns
+            // 16) Windows Firewall => WindowsFirewall-All-x.y.xml
+            // Check this BEFORE Defender patterns since "Windows Defender Firewall" contains both
             if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
-                (tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase) || 
-                 (tokens.Contains("Windows", StringComparer.OrdinalIgnoreCase) && tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase))))
-            {
-                return $"WindowsDefender-All-{verShort}.xml";
-            }
-
-            // 17) Windows Firewall => WindowsFirewall-All-x.y.xml
-            if (tokens.Count >= 3 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
-                tokens[1].Equals("Windows", StringComparison.OrdinalIgnoreCase) &&
-                tokens[2].Equals("Firewall", StringComparison.OrdinalIgnoreCase))
+                tokens.Contains("Firewall", StringComparer.OrdinalIgnoreCase))
             {
                 return $"WindowsFirewall-All-{verShort}.xml";
+            }
+
+            // 17a) Microsoft Defender for Endpoint => Defender-Endpoint-x.y.xml
+            // (Enterprise endpoint protection platform, different from Windows Defender Antivirus)
+            if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase) &&
+                tokens.Contains("Endpoint", StringComparer.OrdinalIgnoreCase))
+            {
+                return $"Defender-Endpoint-{verShort}.xml";
+            }
+
+            // 17b) Windows Defender Antivirus => WindowsDefender-All-x.y.xml
+            // Handles both "MS_Windows_Defender" and "MS_Defender_Antivirus" patterns
+            // Explicitly exclude Firewall to avoid matching "Windows Defender Firewall"
+            if (tokens.Count >= 2 && tokens[0].Equals("MS", StringComparison.OrdinalIgnoreCase) &&
+                tokens.Contains("Defender", StringComparer.OrdinalIgnoreCase) &&
+                !tokens.Contains("Firewall", StringComparer.OrdinalIgnoreCase))
+            {
+                return $"WindowsDefender-All-{verShort}.xml";
             }
 
             // 18) Windows DNS Server 2012/2012R2 => WindowsDnsServer-2012R2-x.y.xml

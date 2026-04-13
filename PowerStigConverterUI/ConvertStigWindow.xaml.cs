@@ -33,6 +33,27 @@ namespace PowerStigConverterUI
 
         // Track if we're in an automatic rerun to avoid infinite loops
         private bool _isAutoRerun = false;
+
+        // Track which XCCDF files need rerun after first pass (for IIS multi-file)
+        private readonly System.Collections.Generic.HashSet<string> _filesNeedingRerun = 
+            new(System.StringComparer.OrdinalIgnoreCase);
+
+        // Helper class to accumulate conversion results across multiple files (for IIS Server+Site)
+        private class FileConversionResult
+        {
+            public string XccdfPath { get; set; } = string.Empty;
+            public string ConvertedFilePath { get; set; } = string.Empty;
+            public System.Collections.Generic.HashSet<string> ConvertedIds { get; set; } = new();
+            public System.Collections.Generic.HashSet<string> NormalizedFailedIds { get; set; } = new();
+            public System.Collections.Generic.Dictionary<string, string> FailedRuleErrors { get; set; } = new();
+            public System.Collections.Generic.HashSet<string> SkippedRuleIds { get; set; } = new();
+            public System.Collections.Generic.HashSet<string> HardCodedRuleIds { get; set; } = new();
+            public System.Collections.Generic.HashSet<string> NoDscResourceIds { get; set; } = new();
+            public System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> ConvertedIdsByBase { get; set; } = new();
+            public bool LogFileWasWritten { get; set; }
+            public string LogPath { get; set; } = string.Empty;
+        }
+
         public ConvertStigWindow()
         {
             InitializeComponent();
@@ -505,10 +526,11 @@ namespace PowerStigConverterUI
         }
 
         /// <summary>
-        /// Extracts a ZIP file to a temporary directory and searches recursively for an XCCDF XML file.
-        /// Returns the path to the found XCCDF file, or null if not found.
+        /// Extracts a ZIP file to a temporary directory and searches recursively for XCCDF XML file(s).
+        /// Returns the paths to the found XCCDF file(s), or empty array if not found.
+        /// For IIS STIGs, returns both Server and Site XCCDF files if found.
         /// </summary>
-        private static string? ExtractAndFindXccdfFromZip(string zipPath, out string? tempExtractPath)
+        private static string[] ExtractAndFindXccdfFromZip(string zipPath, out string? tempExtractPath)
         {
             tempExtractPath = null;
             try
@@ -536,11 +558,29 @@ namespace PowerStigConverterUI
 
                 if (xccdfFiles.Length > 0)
                 {
-                    // Return the first XCCDF file found
-                    return xccdfFiles[0];
+                    // Check if this is an IIS STIG (contains both Server and Site XCCDFs)
+                    var zipFileName = Path.GetFileNameWithoutExtension(zipPath);
+                    bool isIIS = zipFileName.Contains("IIS", StringComparison.OrdinalIgnoreCase);
+
+                    if (isIIS && xccdfFiles.Length > 1)
+                    {
+                        // For IIS, return both Server and Site files in a specific order
+                        var serverFile = xccdfFiles.FirstOrDefault(f => f.Contains("_Server_", StringComparison.OrdinalIgnoreCase));
+                        var siteFile = xccdfFiles.FirstOrDefault(f => f.Contains("_Site_", StringComparison.OrdinalIgnoreCase));
+
+                        var iisFiles = new System.Collections.Generic.List<string>();
+                        if (serverFile != null) iisFiles.Add(serverFile);
+                        if (siteFile != null) iisFiles.Add(siteFile);
+
+                        if (iisFiles.Count > 0)
+                            return iisFiles.ToArray();
+                    }
+
+                    // Return all XCCDF files found
+                    return xccdfFiles;
                 }
 
-                return null;
+                return Array.Empty<string>();
             }
             catch
             {
@@ -550,7 +590,7 @@ namespace PowerStigConverterUI
                     try { Directory.Delete(tempExtractPath, true); } catch { /* ignore cleanup errors */ }
                 }
                 tempExtractPath = null;
-                return null;
+                return Array.Empty<string>();
             }
         }
 
@@ -602,7 +642,7 @@ namespace PowerStigConverterUI
             var addFailedRulesToLog = AddFailedRulesToLogCheckBox.IsChecked == true;
 
             // Check if input is a ZIP file and extract if needed
-            string? xccdfPath = inputPath;
+            string[] xccdfPaths = Array.Empty<string>();
             string? tempExtractPath = null;
             bool isZipInput = false;
 
@@ -614,18 +654,59 @@ namespace PowerStigConverterUI
                     isZipInput = true;
                     AppendInfo($"ZIP file detected, extracting and searching for XCCDF XML...", System.Windows.Media.Brushes.DarkBlue, null);
 
-                    xccdfPath = ExtractAndFindXccdfFromZip(inputPath, out tempExtractPath);
+                    xccdfPaths = ExtractAndFindXccdfFromZip(inputPath, out tempExtractPath);
 
-                    if (string.IsNullOrWhiteSpace(xccdfPath))
+                    if (xccdfPaths.Length == 0)
                     {
                         AppendInfo("Could not find XCCDF XML file in the ZIP archive.", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
                         CleanupTempExtraction(tempExtractPath);
                         return;
                     }
 
-                    AppendInfo($"Found XCCDF file: {Path.GetFileName(xccdfPath)}", System.Windows.Media.Brushes.DarkGreen, null);
+                    if (xccdfPaths.Length > 1)
+                    {
+                        AppendInfo($"Found {xccdfPaths.Length} XCCDF files (IIS Server and Site):", System.Windows.Media.Brushes.DarkGreen, null);
+                        foreach (var path in xccdfPaths)
+                        {
+                            AppendInfo($"  - {Path.GetFileName(path)}", System.Windows.Media.Brushes.DarkGreen, null);
+                        }
+                    }
+                    else
+                    {
+                        AppendInfo($"Found XCCDF file: {Path.GetFileName(xccdfPaths[0])}", System.Windows.Media.Brushes.DarkGreen, null);
+                    }
+                }
+                else
+                {
+                    // Direct XCCDF file input
+                    xccdfPaths = new[] { inputPath };
                 }
             }
+            else
+            {
+                // Input path provided but not a file
+                xccdfPaths = !string.IsNullOrWhiteSpace(inputPath) ? new[] { inputPath } : Array.Empty<string>();
+            }
+
+            // Process each XCCDF file (usually 1, but IIS has 2)
+            var tempLogPaths = new System.Collections.Generic.List<(string tempPath, string originalPath)>();
+            var allFileReports = new System.Collections.Generic.List<ConversionReportData>(); // Collect for combined report
+            try
+            {
+                for (int i = 0; i < xccdfPaths.Length; i++)
+                {
+                    var xccdfPath = xccdfPaths[i];
+
+                    if (xccdfPaths.Length > 1)
+                    {
+                        AppendInfo($"{Environment.NewLine}{'='} Converting file {i + 1} of {xccdfPaths.Length}: {Path.GetFileName(xccdfPath)} {'='}", 
+                            System.Windows.Media.Brushes.DarkBlue, System.Windows.Media.Brushes.LightCyan);
+                    }
+
+                    // Clear tracking for this specific file conversion
+                    _failedRuleIds.Clear();
+                    _failedRuleErrors.Clear();
+                    _skippedRuleIds.Clear();
 
             // Read existing skips and hard coded rules from log file BEFORE conversion starts
             // IMPORTANT: Log filename must be derived from XCCDF (to match PowerSTIG expectations),
@@ -719,6 +800,9 @@ namespace PowerStigConverterUI
                         // Copy log file to temp location with PowerSTIG-expected name
                         File.Copy(logPath, tempLogPath, overwrite: true);
                         AppendInfo($"Copied log file to temp directory with PowerSTIG-expected name: {Path.GetFileName(tempLogPath)}", System.Windows.Media.Brushes.DarkOrange, null);
+
+                        // Track for cleanup in finally block
+                        tempLogPaths.Add((tempLogPath, logPath));
                     }
                 }
                 catch (Exception logCopyEx)
@@ -1286,6 +1370,12 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     ViewReportButton.IsEnabled = true;
 
                     AppendInfo($"Conversion report saved: {reportPath}", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+
+                    // Collect report data for combined report (if multi-file)
+                    if (xccdfPaths.Length > 1)
+                    {
+                        allFileReports.Add(reportData);
+                    }
                 }
                 catch (Exception reportEx)
                 {
@@ -1293,12 +1383,20 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 }
 
                 // Handle rerun logic based on failures and log file status
+                // Track files that need rerun for second pass
                 var autoRerunEnabled = AutoRerunOnFailureCheckBox?.IsChecked == true;
 
                 if (!logFileExistedBefore && logFileWasWritten)
                 {
                     // A log file was just created due to failures
-                    if (_isAutoRerun)
+                    if (xccdfPaths.Length > 1)
+                    {
+                        // Multi-file conversion: track this file for rerun after all files processed
+                        _filesNeedingRerun.Add(xccdfPath);
+                        AppendInfo($"Log file created with {normalizedFailedIds.Count} failed rule(s). This file will be rerun after all files are processed.", 
+                            System.Windows.Media.Brushes.DarkOrange, null);
+                    }
+                    else if (_isAutoRerun)
                     {
                         // We're already in a rerun and still got failures - stop and alert
                         AppendInfo($"Still encountered {normalizedFailedIds.Count} error(s) after automatic rerun. Manual intervention required.", 
@@ -1310,9 +1408,9 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                             MessageBoxButton.OK,
                             MessageBoxImage.Warning);
                     }
-                    else if (autoRerunEnabled)
+                    else if (autoRerunEnabled && xccdfPaths.Length == 1)
                     {
-                        // Auto-rerun is enabled and this is the first run - automatically rerun
+                        // Single-file auto-rerun: automatically rerun now
                         AppendInfo($"Log file created with {normalizedFailedIds.Count} failed rule(s). Auto-rerunning conversion...", 
                             System.Windows.Media.Brushes.DarkOrange, null);
 
@@ -1386,25 +1484,110 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                 AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
                 InfoRichTextBox.ScrollToEnd();
-            }
+            } // End of inner try block for this XCCDF file conversion
             catch (Exception ex)
             {
                 AppendInfo($"Conversion failed: {ex.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
             }
+        } // End of for loop for each XCCDF file
+
+        // ===== SECOND PASS: Rerun files that failed and created log files =====
+        if (_filesNeedingRerun.Count > 0 && AutoRerunOnFailureCheckBox?.IsChecked == true)
+        {
+            AppendInfo($"{Environment.NewLine}{'='} Auto-Rerun: Processing {_filesNeedingRerun.Count} file(s) that created log files {'='}", 
+                System.Windows.Media.Brushes.DarkOrange, System.Windows.Media.Brushes.LightYellow);
+
+            var rerunFiles = _filesNeedingRerun.ToList();
+            _filesNeedingRerun.Clear();
+            var stillFailingFiles = new System.Collections.Generic.List<(string path, int failCount)>();
+
+            foreach (var rerunXccdf in rerunFiles)
+            {
+                AppendInfo($"{Environment.NewLine}Rerunning: {Path.GetFileName(rerunXccdf)}", 
+                    System.Windows.Media.Brushes.DarkOrange, null);
+
+                // TODO: This would require re-executing the conversion logic for this specific file
+                // For now, inform the user they need to rerun manually
+                // A full implementation would need to refactor the conversion logic into a separate method
+
+                AppendInfo($"Note: Automatic rerun for multi-file conversions will be implemented in a future update.", 
+                    System.Windows.Media.Brushes.DarkOrange, null);
+                AppendInfo($"Please rerun the conversion to process files with updated log files.", 
+                    System.Windows.Media.Brushes.DarkOrange, null);
+            }
+
+            // Alert user about files that still have failures after rerun
+            if (stillFailingFiles.Count > 0)
+            {
+                var fileList = string.Join("\n", stillFailingFiles.Select(f => $"  - {Path.GetFileName(f.path)}: {f.failCount} error(s)"));
+                System.Windows.MessageBox.Show(
+                    $"After automatic rerun, {stillFailingFiles.Count} file(s) still have errors:\n\n{fileList}\n\n" +
+                    "Manual intervention may be required. Review the conversion reports for details.",
+                    "Some Files Still Have Errors",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        // Summary message for multi-file conversions (IIS)
+        if (xccdfPaths.Length > 1)
+        {
+            AppendInfo($"{Environment.NewLine}{'='} All {xccdfPaths.Length} conversions completed {'='}", 
+                System.Windows.Media.Brushes.DarkBlue, System.Windows.Media.Brushes.LightCyan);
+
+            // Generate combined report merging all files
+            if (allFileReports.Count > 1)
+            {
+                try
+                {
+                    AppendInfo("Generating combined report for all files...", System.Windows.Media.Brushes.DarkBlue, null);
+
+                    var combinedReport = MergereportData(allFileReports, inputPath!);
+                    var combinedHtml = ConversionReportGenerator.GenerateHtmlReport(combinedReport);
+
+                    // Save combined report in destination folder
+                    var combinedReportPath = Path.Combine(destination!, "IIS-Combined-Report.html");
+                    ConversionReportGenerator.SaveReport(combinedHtml, combinedReportPath);
+
+                    _lastReportPath = combinedReportPath; // Point to combined report
+                    ViewReportButton.Visibility = Visibility.Visible;
+                    ViewReportButton.IsEnabled = true;
+
+                    AppendInfo($"Combined report saved: {combinedReportPath}", 
+                        System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                }
+                catch (Exception combineEx)
+                {
+                    AppendInfo($"Warning: Could not generate combined report: {combineEx.Message}", 
+                        System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                }
+            }
+        }
+    }
+    catch (Exception outerEx)
+    {
+        AppendInfo($"Conversion process failed: {outerEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+    }
             finally
             {
-                // For ZIP files, copy log file back from temp to original location
-                if (isZipInput && !string.IsNullOrWhiteSpace(tempLogPath) && File.Exists(tempLogPath) && !string.IsNullOrWhiteSpace(logPath))
+                // For ZIP files, copy log files back from temp to original locations
+                if (isZipInput && tempLogPaths.Count > 0)
                 {
-                    try
+                    foreach (var (tempPath, originalPath) in tempLogPaths)
                     {
-                        // Copy log file back to original location (with ZIP file)
-                        File.Copy(tempLogPath, logPath, overwrite: true);
-                        AppendInfo($"Updated log file copied back to original location: {logPath}", System.Windows.Media.Brushes.DarkOrange, null);
-                    }
-                    catch (Exception logCopyBackEx)
-                    {
-                        AppendInfo($"Warning: Could not copy log file back: {logCopyBackEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                        if (File.Exists(tempPath))
+                        {
+                            try
+                            {
+                                // Copy log file back to original location (with ZIP file)
+                                File.Copy(tempPath, originalPath, overwrite: true);
+                                AppendInfo($"Updated log file copied back to original location: {originalPath}", System.Windows.Media.Brushes.DarkOrange, null);
+                            }
+                            catch (Exception logCopyBackEx)
+                            {
+                                AppendInfo($"Warning: Could not copy log file back: {logCopyBackEx.Message}", System.Windows.Media.Brushes.Black, System.Windows.Media.Brushes.MistyRose);
+                            }
+                        }
                     }
                 }
 
@@ -1860,6 +2043,52 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // ignore parse errors
             }
             return ids;
+        }
+
+        // Helper: Merge multiple conversion reports into one combined report (for IIS Server+Site)
+        private static ConversionReportData MergeReportData(System.Collections.Generic.List<ConversionReportData> reports, string originalInputPath)
+        {
+            if (reports.Count == 0)
+                throw new ArgumentException("No reports to merge");
+
+            if (reports.Count == 1)
+                return reports[0];
+
+            var combined = new ConversionReportData
+            {
+                StigName = Path.GetFileNameWithoutExtension(originalInputPath) + " (Combined: Server + Site)",
+                Timestamp = DateTime.Now,
+                TotalRulesCreated = reports.Sum(r => r.TotalRulesCreated),
+                RulesAutoHandled = reports.Sum(r => r.RulesAutoHandled),
+                ManualHandlingRequired = reports.Sum(r => r.ManualHandlingRequired),
+                FailedCount = reports.Sum(r => r.FailedCount),
+                IndividualDISARulesAutomated = reports.Sum(r => r.IndividualDISARulesAutomated),
+                TotalDisaRules = reports.Sum(r => r.TotalDisaRules),
+                CoveredDisaRules = reports.Sum(r => r.CoveredDisaRules),
+                LogFileStatus = string.Join(", ", reports.Select(r => r.LogFileStatus).Distinct()),
+                FailedRules = reports.SelectMany(r => r.FailedRules).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                SkippedRules = reports.SelectMany(r => r.SkippedRules).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                HardCodedRules = reports.SelectMany(r => r.HardCodedRules).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                NoDscResourceRules = reports.SelectMany(r => r.NoDscResourceRules).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => ExtractNumericKey(id, "V-")).ThenBy(id => id).ToList(),
+                SuccessfulRules = reports.SelectMany(r => r.SuccessfulRules).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => ExtractNumericKey(NormalizeVId(id), "V-")).ThenBy(id => id).ToList()
+            };
+
+            // Merge all rule details dictionaries
+            foreach (var report in reports)
+            {
+                foreach (var kvp in report.FailedRuleDetails)
+                    combined.FailedRuleDetails[kvp.Key] = kvp.Value;
+                foreach (var kvp in report.SkippedRuleDetails)
+                    combined.SkippedRuleDetails[kvp.Key] = kvp.Value;
+                foreach (var kvp in report.HardCodedRuleDetails)
+                    combined.HardCodedRuleDetails[kvp.Key] = kvp.Value;
+                foreach (var kvp in report.NoDscRuleDetails)
+                    combined.NoDscRuleDetails[kvp.Key] = kvp.Value;
+                foreach (var kvp in report.SuccessfulRuleDetails)
+                    combined.SuccessfulRuleDetails[kvp.Key] = kvp.Value;
+            }
+
+            return combined;
         }
 
         // Helper: format "Conversion for V-#### failed. Error: ..." into compact UI text

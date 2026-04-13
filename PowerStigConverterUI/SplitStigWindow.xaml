@@ -85,20 +85,24 @@
             <CheckBox x:Name="OverwriteCheckBox" Content="Overwrite if files exist" IsChecked="True"/>
         </StackPanel>
 
-        <!-- Output -->
-        <RichTextBox x:Name="OutputRichTextBox"
-                     Grid.Row="4"
-                     Margin="0"
-                     IsReadOnly="True"
-                     VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto"
-                     FontFamily="Consolas"
-                     FontSize="11"
-                     Background="White">
-            <RichTextBox.Document>
-                <FlowDocument/>
-            </RichTextBox.Document>
-        </RichTextBox>
+        <!-- Output / Messages -->
+        <GroupBox Grid.Row="4">
+            <GroupBox.Header>
+                <TextBlock Text="Messages" FontWeight="SemiBold"/>
+            </GroupBox.Header>
+            <RichTextBox x:Name="OutputRichTextBox"
+                         Margin="8"
+                         IsReadOnly="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         FontFamily="Consolas"
+                         FontSize="11"
+                         Background="White">
+                <RichTextBox.Document>
+                    <FlowDocument/>
+                </RichTextBox.Document>
+            </RichTextBox>
+        </GroupBox>
 
         <!-- Bottom bar: Status and Actions stacked vertically -->
         <Grid Grid.Row="5" Margin="0,8,0,0">
@@ -120,10 +124,27 @@
                      IsTabStop="False"/>
 
             <!-- Actions (right aligned, bottom row) -->
-            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button x:Name="SplitButton" Content="Split" Style="{StaticResource PrimaryButtonStyle}" Width="100" Margin="0,0,8,0" Click="SplitButton_Click"/>
-                <Button x:Name="CloseButton" Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="90" Click="CloseButton_Click"/>
-            </StackPanel>
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Clear button (left aligned) -->
+                <Button x:Name="ClearMessagesButton" 
+                        Grid.Column="0"
+                        Content="Clear" 
+                        Style="{StaticResource StandardButtonStyle}" 
+                        Width="100" 
+                        HorizontalAlignment="Left"
+                        Click="ClearMessages_Click"/>
+
+                <!-- Actions (right aligned) -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="SplitButton" Content="Split" Style="{StaticResource PrimaryButtonStyle}" Width="100" Margin="0,0,8,0" Click="SplitButton_Click"/>
+                    <Button x:Name="CloseButton" Content="Close" Style="{StaticResource SecondaryButtonStyle}" Width="90" Click="CloseButton_Click"/>
+                </StackPanel>
+            </Grid>
         </Grid>
         </Grid>
     </Grid>

@@ -208,17 +208,18 @@ namespace PowerStigConverterUI
                     <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
                 </div>
             </div>
-            {((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 ? $@"
             <div class=""summary-card warning"" onclick=""jumpToSection('nodsc-section')"">
                 <div style=""display: inline-block; text-align: left;"">
                     <div style=""font-size: 1.3em; font-weight: 600; color: #333; margin-bottom: 6px;"">{data.NoDscResourceRules.Count + data.HardCodedRules.Count} Manual Intervention Required ({(data.TotalDisaRules > 0 ? ((data.NoDscResourceRules.Count + data.HardCodedRules.Count) * 100.0 / data.TotalDisaRules).ToString("F1") : "0")}%)</div>
                     <div style=""font-size: 0.85em; color: #666; margin-top: 5px;"">
-                        {(data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "")}
-                        {(data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")}
+                        {((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 
+                            ? (data.NoDscResourceRules.Count > 0 ? $"{data.NoDscResourceRules.Count} No DSC Resource" : "") +
+                              (data.HardCodedRules.Count > 0 ? (data.NoDscResourceRules.Count > 0 ? " • " : "") + $"{data.HardCodedRules.Count} Hard Coded" : "")
+                            : "All rules automated")}
                     </div>
-                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">Click to view details</div>
+                    <div style=""font-size: 0.75em; color: #999; margin-top: 5px; font-style: italic;"">{((data.NoDscResourceRules.Count + data.HardCodedRules.Count) > 0 ? "Click to view details" : "No manual intervention needed")}</div>
                 </div>
-            </div>" : "")}
+            </div>
         </div>
 
         <!-- Breakdown cards - REGULAR SIZE -->

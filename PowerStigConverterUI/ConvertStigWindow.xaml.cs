@@ -624,6 +624,12 @@ namespace PowerStigConverterUI
             {
                 // Only clear on manual conversion start (not on auto-rerun)
                 InfoRichTextBox.Document.Blocks.Clear();
+
+                // Add clear start marker
+                var separator = new string('=', 80);
+                AppendInfo($"{separator}", System.Windows.Media.Brushes.DarkBlue, System.Windows.Media.Brushes.LightCyan);
+                AppendInfo($"CONVERSION STARTED", System.Windows.Media.Brushes.DarkBlue, System.Windows.Media.Brushes.LightCyan);
+                AppendInfo($"{separator}{Environment.NewLine}", System.Windows.Media.Brushes.DarkBlue, System.Windows.Media.Brushes.LightCyan);
             }
 
             _failedRuleIds.Clear();
@@ -1369,7 +1375,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     ViewReportButton.Visibility = Visibility.Visible; // Show the button
                     ViewReportButton.IsEnabled = true;
 
-                    AppendInfo($"Conversion report saved: {reportPath}", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                    AppendInfo($"Conversion report saved: {reportPath}", System.Windows.Media.Brushes.DarkBlue, null);
 
                     // Collect report data for combined report (if multi-file)
                     if (xccdfPaths.Length > 1)
@@ -1482,7 +1488,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 // Reset rerun flag on successful completion (no failures or second run complete)
                 _isAutoRerun = false;
 
-                AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                AppendInfo("Conversion completed.", System.Windows.Media.Brushes.DarkBlue, null);
                 InfoRichTextBox.ScrollToEnd();
             } // End of inner try block for this XCCDF file conversion
             catch (Exception ex)
@@ -1542,7 +1548,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                 {
                     AppendInfo("Generating combined report for all files...", System.Windows.Media.Brushes.DarkBlue, null);
 
-                    var combinedReport = MergereportData(allFileReports, inputPath!);
+                    var combinedReport = MergeReportData(allFileReports, inputPath!);
                     var combinedHtml = ConversionReportGenerator.GenerateHtmlReport(combinedReport);
 
                     // Save combined report in destination folder
@@ -1554,7 +1560,7 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
                     ViewReportButton.IsEnabled = true;
 
                     AppendInfo($"Combined report saved: {combinedReportPath}", 
-                        System.Windows.Media.Brushes.DarkGreen, System.Windows.Media.Brushes.LightGreen);
+                        System.Windows.Media.Brushes.DarkBlue, null);
                 }
                 catch (Exception combineEx)
                 {
@@ -1593,6 +1599,12 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
 
                 SetBusy(false);
                 ConvertButton.IsEnabled = true;
+
+                // Add clear end marker
+                var separator = new string('=', 80);
+                AppendInfo($"{Environment.NewLine}{separator}", System.Windows.Media.Brushes.DarkBlue, null);
+                AppendInfo($"CONVERSION COMPLETED", System.Windows.Media.Brushes.DarkBlue, null);
+                AppendInfo($"{separator}", System.Windows.Media.Brushes.DarkBlue, null);
 
                 // Clean up temporary ZIP extraction directory if it was created
                 if (isZipInput && !string.IsNullOrWhiteSpace(tempExtractPath))
@@ -2226,6 +2238,11 @@ ConvertTo-PowerStigXml -Destination $Destination -Path $XccdfPath -CreateOrgSett
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        private void ClearMessages_Click(object sender, RoutedEventArgs e)
+        {
+            InfoRichTextBox.Document.Blocks.Clear();
         }
 
         private static int ExtractNumericKey(string id, string prefix)

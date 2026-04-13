@@ -634,6 +634,12 @@ try {{
             }
             this.Close();
         }
+
+        private void ClearMessages_Click(object sender, RoutedEventArgs e)
+        {
+            OutputRichTextBox.Document.Blocks.Clear();
+        }
+
         private void ValidateSourceIsWindowsOs()
         {
             var src = SourcePathTextBox.Text?.Trim();

@@ -111,8 +111,9 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Busy indicator (left aligned) -->
+            <!-- Left side: Clear button and Busy indicator -->
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="ClearMessagesButton" Content="Clear" Style="{StaticResource StandardButtonStyle}" Width="120" Margin="0,0,12,0" Click="ClearMessages_Click"/>
                 <ProgressBar x:Name="BusyProgressBar"
                              Width="180"
                              Height="16"
